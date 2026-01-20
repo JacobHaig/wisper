@@ -8,6 +8,8 @@ from pathlib import Path
 import json
 
 from moviepy import VideoFileClip, TextClip, CompositeVideoClip
+from nemo.collections.asr.models import SortformerEncLabelModel
+
 
 
 
@@ -29,28 +31,11 @@ def convert_video_to_audio(video_path, audio_path) :
 
 
 
-def transcribe_audio_whisper(audio_path) :
-    print(f"Transcribing audio using whisper... {audio_path}")
-
-    import whisper                                                                                                  
-    # load audio and pad/trim it to fit 30 seconds
-    path = Path(audio_path)
-    model = whisper.load_model('turbo')
-    result = model.transcribe(str(path), language='en', verbose=True)
-
-    # Dump the results to a JSON file
-    with open('transcript.json', "w") as file:
-        for segment in result['segments']:
-            file.write("[" + str(segment['start']) + " --> " + str(segment['end']) + "] " + segment['text'] + "\n")
-
-    print(result)
-
-    return result 
 
 def transcribe_audio_diarization(audio_path: str):
     print(f"Performing speaker diarization on audio... {audio_path}")
 
-    from nemo.collections.asr.models import SortformerEncLabelModel
+
     diar_model :SortformerEncLabelModel = SortformerEncLabelModel.from_pretrained("nvidia/diar_streaming_sortformer_4spk-v2.1")
 
     print("type of diar_model:", type(diar_model))
@@ -152,8 +137,6 @@ def save_transcript_to_file(transcript, output_path: str):
 
 def video_to_transcript(video_path: str, audio_path: str, transcript_output_path: str):
     convert_video_to_audio(video_path, audio_path)
-    # transcriptions = transcribe_audio_whisper(audio_path)
-    # transcribe_audio_diarization(audio_path)
     transcript = transcribe_audio_multitalker_parakeet(audio_path)
 
     save_transcript_to_file(transcript, transcript_output_path)
