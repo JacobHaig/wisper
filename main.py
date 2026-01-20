@@ -5,10 +5,12 @@ from unittest import result
 from xml.parsers.expat import model
 import json
 
+import time
 
 import torch
 from moviepy import VideoFileClip, TextClip, CompositeVideoClip
 from nemo.collections.asr.models import SortformerEncLabelModel, ASRModel
+import nemo.collections.asr as asr
 
 
 from multitalker_transcript_config import MultitalkerTranscriptionConfig
@@ -31,15 +33,14 @@ def convert_video_to_audio(video_path, audio_path):
     os.makedirs("audio", exist_ok=True)
     video = VideoFileClip(video_path)
 
-    print(f"Extracting audio to {audio_path}...")
-    video.audio.write_audiofile(audio_path)
+    print(f"Extracting audio to {audio_path} as mono...")
+    video.audio.write_audiofile(audio_path, ffmpeg_params=["-ac", "1"])
 
 
 def transcribe_audio_diarization(audio_path: str):
     print(f"Performing speaker diarization on audio... {audio_path}")
 
-    diar_model: SortformerEncLabelModel = SortformerEncLabelModel.from_pretrained(
-        "nvidia/diar_streaming_sortformer_4spk-v2.1")
+    diar_model: SortformerEncLabelModel = SortformerEncLabelModel.from_pretrained( "nvidia/diar_streaming_sortformer_4spk-v2.1")
 
     print("type of diar_model:", type(diar_model))
     # type of diar_model: <class 'nemo.collections.asr.models.sortformer_diar_models.SortformerEncLabelModel'>
@@ -121,29 +122,57 @@ def transcribe_audio_multitalker_parakeet(audio_path: str, transcript_output_pat
     return transcript
 
 
+# This returns a dictionary with word, segment, and char level timestamps
+def transcribe_audio_parakeet(audio_path: str) -> dict:
+    print(f"Performing speaker diarization on audio... {audio_path}")
+
+    asr_model = asr.models.ASRModel.from_pretrained(model_name="nvidia/parakeet-tdt-0.6b-v3")
+
+    print("type of asr_model:", type(asr_model))
+    # type of asr_model: <class 'nemo.collections.asr.models.sortformer_diar_models.SortformerEncLabelModel'>
+
+
+    output = asr_model.transcribe([audio_path], timestamps=True)
+
+    word_timestamps = output[0].timestamp['word'] # word level timestamps for first sample
+    segment_timestamps = output[0].timestamp['segment'] # segment level timestamps
+    char_timestamps = output[0].timestamp['char'] # char level timestamps
+
+
+    print(f"Type of output: {type(output)}")
+
+    
+    print("\nWord-level Timestamps:")
+    for stamp in word_timestamps:
+        print(f"{stamp['start']}s - {stamp['end']}s : {stamp['word']}")
+
+    print("\nSegment-level Timestamps:")
+    for stamp in segment_timestamps:
+        print(f"{stamp['start']}s - {stamp['end']}s : {stamp['segment']}")
+
+    print("\nCharacter-level Timestamps:")
+    for stamp in char_timestamps:
+        print(f"{stamp['start']}s - {stamp['end']}s : {stamp['char']}")
+
+    return output[0].timestamp
+
+
+
+
+
+
 def save_transcript_to_file(transcript, output_path: str):
     
     os.makedirs("transcript", exist_ok=True)
 
-    import torch
-    def tensor_to_list(obj):
-        if isinstance(obj, torch.Tensor):
-            return obj.tolist()
-        if isinstance(obj, dict):
-            return {k: tensor_to_list(v) for k, v in obj.items()}
-        if isinstance(obj, list):
-            return [tensor_to_list(v) for v in obj]
-        return obj
-
-    serializable_transcript = tensor_to_list(transcript)
     with open(output_path, 'w', encoding='utf-8') as f:
-        json.dump(serializable_transcript, f, ensure_ascii=False, indent=2)
+        json.dump(transcript, f, ensure_ascii=False, indent=2)
     print(f"Transcript saved to {output_path}")
 
 
 def video_to_transcript(video_path: str, audio_path: str, transcript_output_path: str):
     convert_video_to_audio(video_path, audio_path)
-    transcript = transcribe_audio_multitalker_parakeet(audio_path)
+    transcript = transcribe_audio_parakeet(audio_path)
 
     save_transcript_to_file(transcript, transcript_output_path)
 
@@ -162,6 +191,8 @@ def main():
             print(f"Transcript Output Path: {transcript_output_path}")
 
             video_to_transcript(video_path, audio_path, transcript_output_path)
+
+            time.sleep(1)  # Optional: small delay between processing videos
 
 
 if __name__ == "__main__":
