@@ -66,7 +66,7 @@ def convert_video_to_audio_tracks(video_path, audio_path):
 
 # This returns a dictionary with word, segment, and char level timestamps
 def transcribe_audio_parakeet(audio_paths: list[str]) -> dict:
-    print(f"Performing speaker diarization on audio... {audio_paths}")
+    print(f"Performing speaker transcription on audio... {audio_paths}")
 
     asr_model = asr.models.ASRModel.from_pretrained(model_name="nvidia/parakeet-tdt-0.6b-v3")
 
