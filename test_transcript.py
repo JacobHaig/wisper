@@ -5,7 +5,7 @@ import time
 import json
 
 
-def load_transcript_from_file(input_path: str) -> dict:
+def load_transcript_from_file(input_path: str) -> list[dict]:
     with open(input_path, 'r', encoding='utf-8') as f:
         transcript = json.load(f)
     return transcript

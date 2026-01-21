@@ -1,30 +1,13 @@
 import os
-from typing import List
-from pathlib import Path
-from unittest import result
-from xml.parsers.expat import model
 import json
-
 import time
-
-import torch
-from moviepy import VideoFileClip, TextClip, CompositeVideoClip, AudioFileClip
-from nemo.collections.asr.models import SortformerEncLabelModel, ASRModel
-import nemo.collections.asr as asr
-
-
-from multitalker_transcript_config import MultitalkerTranscriptionConfig
-from omegaconf import OmegaConf
-from nemo.collections.asr.parts.utils.streaming_utils import CacheAwareStreamingAudioBuffer
-from nemo.collections.asr.parts.utils.multispk_transcribe_utils import SpeakerTaggedASR
-import soundfile as sf
-import numpy as np
-
 import subprocess
 
-# Helper function to strip path and extension
-# Usage:
-# stripped_name = strip_path("path/to/file.ext")  # returns "file"
+import numpy as np
+import nemo.collections.asr as asr
+from moviepy import VideoFileClip, TextClip, CompositeVideoClip, AudioFileClip
+
+
 def strip_path(path: str) -> str:
     return path.split(".")[0]
 
@@ -33,9 +16,6 @@ def convert_video_to_audio_tracks(video_path, audio_path):
     print("Converting video to all audio tracks with MoviePy...")
 
     os.makedirs("audio", exist_ok=True)
-
-    # MoviePy only exposes the default audio track, but you can use AudioFileClip with ffmpeg's -map option
-    # Get number of audio tracks using ffprobe
 
     print(f"Getting number of audio tracks in {video_path}...")
     ffprobe_cmd = ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=index", "-of", "json", video_path]
@@ -46,8 +26,6 @@ def convert_video_to_audio_tracks(video_path, audio_path):
     print(f"Found {num_tracks} audio track(s). Exporting each as mono...")
 
     audio_paths = []
-
-
     for i in range(num_tracks):
         track_output = f"{audio_path}_track{i+1}.mp3"
         # Use ffmpeg to extract each track directly to mono mp3
@@ -69,37 +47,26 @@ def transcribe_audio_parakeet(audio_paths: list[str]) -> list[dict]:
     print(f"Performing speaker transcription on audio... {audio_paths}")
 
     asr_model = asr.models.ASRModel.from_pretrained(model_name="nvidia/parakeet-tdt-0.6b-v3")
-
     print("type of asr_model:", type(asr_model))
     # type of asr_model: <class 'nemo.collections.asr.models.sortformer_diar_models.SortformerEncLabelModel'>
 
-    outputs = []
-    for path in audio_paths:
-        output = asr_model.transcribe([path], timestamps=True)
+    outputs = asr_model.transcribe(audio_paths, timestamps=True)
+    print(f"Type of output: {type(outputs[0])}")
 
-        word_timestamps = output[0].timestamp['word'] # word level timestamps for first sample
-        segment_timestamps = output[0].timestamp['segment'] # segment level timestamps
-        char_timestamps = output[0].timestamp['char'] # char level timestamps
 
-        print(f"Type of output: {type(output)}")
+    output_list = []
+    for output in outputs:    
+        word_timestamps = output.timestamp['word'] # word level timestamps for first sample
+        segment_timestamps = output.timestamp['segment'] # segment level timestamps
+        char_timestamps = output.timestamp['char'] # char level timestamps
 
-        # print("\nWord-level Timestamps:")
-        # for stamp in word_timestamps:
-        #     print(f"{stamp['start']}s - {stamp['end']}s : {stamp['word']}")
-
-        if not len(segment_timestamps) == 0:        
+        if len(segment_timestamps) > 0:
             print("\nSegment-level Timestamps:")
-            for stamp in segment_timestamps:
-                print(f"  {round(stamp['start'], 2)}s - {round(stamp['end'], 2)}s : {stamp['segment']}")
+        for stamp in segment_timestamps:
+            print(f"  {round(stamp['start'], 2)}s - {round(stamp['end'], 2)}s : {stamp['segment']}")
 
-        # print("\nCharacter-level Timestamps:")
-        # for stamp in char_timestamps:
-        #     print(f"{stamp['start']}s - {stamp['end']}s : {stamp['char']}")
-
-        outputs.append(output[0].timestamp)
-
-    return outputs
-
+        output_list.append(output.timestamp)
+    return output_list
 
 
 def save_transcript_to_file(transcript, output_path: str):
@@ -132,7 +99,7 @@ def main():
 
             video_to_transcript(video_path, audio_path, transcript_output_path)
 
-            time.sleep(1)  # Optional: small delay between processing videos
+            time.sleep(0.5)  # Optional: small delay between processing videos
 
 
 if __name__ == "__main__":
