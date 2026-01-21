@@ -8,7 +8,7 @@ import json
 import time
 
 import torch
-from moviepy import VideoFileClip, TextClip, CompositeVideoClip
+from moviepy import VideoFileClip, TextClip, CompositeVideoClip, AudioFileClip
 from nemo.collections.asr.models import SortformerEncLabelModel, ASRModel
 import nemo.collections.asr as asr
 
@@ -20,6 +20,8 @@ from nemo.collections.asr.parts.utils.multispk_transcribe_utils import SpeakerTa
 import soundfile as sf
 import numpy as np
 
+import subprocess
+
 # Helper function to strip path and extension
 # Usage:
 # stripped_name = strip_path("path/to/file.ext")  # returns "file"
@@ -27,142 +29,81 @@ def strip_path(path: str) -> str:
     return path.split(".")[0]
 
 
-def convert_video_to_audio(video_path, audio_path):
-    print("Converting video to audio...")
+def convert_video_to_audio_tracks(video_path, audio_path):
+    print("Converting video to all audio tracks with MoviePy...")
 
     os.makedirs("audio", exist_ok=True)
-    video = VideoFileClip(video_path)
 
-    print(f"Extracting audio to {audio_path} as mono...")
-    video.audio.write_audiofile(audio_path, ffmpeg_params=["-ac", "1"])
+    # MoviePy only exposes the default audio track, but you can use AudioFileClip with ffmpeg's -map option
+    # Get number of audio tracks using ffprobe
 
+    print(f"Getting number of audio tracks in {video_path}...")
+    ffprobe_cmd = ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=index", "-of", "json", video_path]
+    result = subprocess.run(ffprobe_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    info = json.loads(result.stdout)
 
-def transcribe_audio_diarization(audio_path: str):
-    print(f"Performing speaker diarization on audio... {audio_path}")
+    num_tracks = len(info.get("streams", []))
+    print(f"Found {num_tracks} audio track(s). Exporting each as mono...")
 
-    diar_model: SortformerEncLabelModel = SortformerEncLabelModel.from_pretrained( "nvidia/diar_streaming_sortformer_4spk-v2.1")
-
-    print("type of diar_model:", type(diar_model))
-    # type of diar_model: <class 'nemo.collections.asr.models.sortformer_diar_models.SortformerEncLabelModel'>
-
-    diar_model.eval()
-
-    diar_model.sortformer_modules.chunk_len = 340
-    diar_model.sortformer_modules.chunk_right_context = 40
-    diar_model.sortformer_modules.fifo_len = 40
-    diar_model.sortformer_modules.spkcache_update_period = 300
-
-    predicted_segments = diar_model.diarize(audio=[audio_path], batch_size=1)
-
-    for segment in predicted_segments:
-        print(segment)
+    audio_paths = []
 
 
-def transcribe_audio_multitalker_parakeet(audio_path: str, transcript_output_path: str = "multitalker_transcript.json"):
-    print(f"Performing multitalker transcription on audio... {audio_path}")
-    print("Torch device:", torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"))
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    for i in range(num_tracks):
+        track_output = f"{audio_path}_track{i+1}.mp3"
+        # Use ffmpeg to extract each track directly to mono mp3
+        extract_cmd = [
+            "ffmpeg", "-y", "-i", video_path,
+            "-map", f"0:a:{i}", "-ac", "1", "-codec:a", "libmp3lame", track_output
+        ]
+        print(f"Extracting track {i+1} to {track_output}...")
+        subprocess.run(extract_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        print(f"Exported {track_output}")
+        audio_paths.append(track_output)
 
-    # --- Preprocess audio file to ensure mono (1D) shape ---
-    data, samplerate = sf.read(audio_path)
-    # If stereo or multi-channel, convert to mono by averaging channels
-    if len(data.shape) > 1:
-        print(f"Audio has {data.shape[1]} channels, converting to mono.")
-        data = np.mean(data, axis=1)
-        sf.write(audio_path, data, samplerate)
-    elif len(data.shape) == 1:
-        print("Audio is already mono.")
-    else:
-        raise RuntimeError(
-            "Unexpected audio data shape: {}".format(data.shape))
-
-    # --- Continue with NeMo pipeline ---
-    diar_model = SortformerEncLabelModel.from_pretrained("nvidia/diar_streaming_sortformer_4spk-v2").eval().to(device)
-    asr_model = ASRModel.from_pretrained("nvidia/multitalker-parakeet-streaming-0.6b-v1").eval().to(device)
-
-
-    # Set up the configuration for multitalker transcription
-    cfg = OmegaConf.structured(MultitalkerTranscriptionConfig())
-    cfg.audio_file = audio_path
-    cfg.output_path = transcript_output_path
-    diar_model = MultitalkerTranscriptionConfig.init_diar_model( cfg, diar_model)
-
-    samples = [{'audio_filepath': cfg.audio_file}]
-    streaming_buffer = CacheAwareStreamingAudioBuffer(
-        model=asr_model,
-        online_normalization=cfg.online_normalization,
-        pad_and_drop_preencoded=cfg.pad_and_drop_preencoded,
-    )
-    streaming_buffer.append_audio_file(audio_filepath=cfg.audio_file, stream_id=-1)
-    streaming_buffer_iter = iter(streaming_buffer)
-
-    # Use the helper class `SpeakerTaggedASR`, which handles all ASR and diarization cache data for streaming.
-    multispk_asr_streamer = SpeakerTaggedASR(cfg, asr_model, diar_model)
-
-    # Iterate over audio chunks and perform streaming ASR with speaker tagging.
-    for step_num, (chunk_audio, chunk_lengths) in enumerate(streaming_buffer_iter):
-        drop_extra_pre_encoded = ( 0 if step_num == 0 and not cfg.pad_and_drop_preencoded
-            else asr_model.encoder.streaming_cfg.drop_extra_pre_encoded
-        )
-        with torch.inference_mode():
-            with torch.amp.autocast(diar_model.device.type, enabled=True):
-                with torch.no_grad():
-                    multispk_asr_streamer.perform_parallel_streaming_stt_spk(
-                        step_num=step_num,
-                        chunk_audio=chunk_audio,
-                        chunk_lengths=chunk_lengths,
-                        is_buffer_empty=streaming_buffer.is_buffer_empty(),
-                        drop_extra_pre_encoded=drop_extra_pre_encoded,
-                    )
-
-    # Generate the speaker-tagged transcript and print it.
-    multispk_asr_streamer.generate_seglst_dicts_from_parallel_streaming(samples=samples)
-    transcript = multispk_asr_streamer.instance_manager.seglst_dict_list
-
-    return transcript
+    print("All audio tracks exported.")
+    return audio_paths
 
 
 # This returns a dictionary with word, segment, and char level timestamps
-def transcribe_audio_parakeet(audio_path: str) -> dict:
-    print(f"Performing speaker diarization on audio... {audio_path}")
+def transcribe_audio_parakeet(audio_paths: list[str]) -> dict:
+    print(f"Performing speaker diarization on audio... {audio_paths}")
 
     asr_model = asr.models.ASRModel.from_pretrained(model_name="nvidia/parakeet-tdt-0.6b-v3")
 
     print("type of asr_model:", type(asr_model))
     # type of asr_model: <class 'nemo.collections.asr.models.sortformer_diar_models.SortformerEncLabelModel'>
 
+    outputs = []
+    for path in audio_paths:
+        output = asr_model.transcribe([path], timestamps=True)
 
-    output = asr_model.transcribe([audio_path], timestamps=True)
-
-    word_timestamps = output[0].timestamp['word'] # word level timestamps for first sample
-    segment_timestamps = output[0].timestamp['segment'] # segment level timestamps
-    char_timestamps = output[0].timestamp['char'] # char level timestamps
-
-
-    print(f"Type of output: {type(output)}")
-
-    
-    print("\nWord-level Timestamps:")
-    for stamp in word_timestamps:
-        print(f"{stamp['start']}s - {stamp['end']}s : {stamp['word']}")
-
-    print("\nSegment-level Timestamps:")
-    for stamp in segment_timestamps:
-        print(f"{stamp['start']}s - {stamp['end']}s : {stamp['segment']}")
-
-    print("\nCharacter-level Timestamps:")
-    for stamp in char_timestamps:
-        print(f"{stamp['start']}s - {stamp['end']}s : {stamp['char']}")
-
-    return output[0].timestamp
+        word_timestamps = output[0].timestamp['word'] # word level timestamps for first sample
+        segment_timestamps = output[0].timestamp['segment'] # segment level timestamps
+        char_timestamps = output[0].timestamp['char'] # char level timestamps
 
 
+        print(f"Type of output: {type(output)}")
 
+        
+        print("\nWord-level Timestamps:")
+        for stamp in word_timestamps:
+            print(f"{stamp['start']}s - {stamp['end']}s : {stamp['word']}")
+
+        print("\nSegment-level Timestamps:")
+        for stamp in segment_timestamps:
+            print(f"{stamp['start']}s - {stamp['end']}s : {stamp['segment']}")
+
+        print("\nCharacter-level Timestamps:")
+        for stamp in char_timestamps:
+            print(f"{stamp['start']}s - {stamp['end']}s : {stamp['char']}")
+
+        outputs.append(output[0].timestamp)
+
+    return outputs
 
 
 
 def save_transcript_to_file(transcript, output_path: str):
-    
     os.makedirs("transcript", exist_ok=True)
 
     with open(output_path, 'w', encoding='utf-8') as f:
@@ -171,8 +112,8 @@ def save_transcript_to_file(transcript, output_path: str):
 
 
 def video_to_transcript(video_path: str, audio_path: str, transcript_output_path: str):
-    convert_video_to_audio(video_path, audio_path)
-    transcript = transcribe_audio_parakeet(audio_path)
+    audio_paths = convert_video_to_audio_tracks(video_path, audio_path)
+    transcript = transcribe_audio_parakeet(audio_paths)
 
     save_transcript_to_file(transcript, transcript_output_path)
 
@@ -183,7 +124,7 @@ def main():
             print(f"Processing video: {video}")
 
             video_path = f"video/{video}"
-            audio_path = f"audio/{strip_path(video)}.mp3"
+            audio_path = f"audio/{strip_path(video)}"        
             transcript_output_path = f"transcript/{strip_path(video)}.json"
 
             print(f"Video Path: {video_path}")
