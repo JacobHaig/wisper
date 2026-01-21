@@ -1,4 +1,7 @@
 *.mp4
 *.json
 *.mp3
+*.wav
+*.avi
+*.mkv
 /__pycache__
