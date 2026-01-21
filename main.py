@@ -65,7 +65,7 @@ def convert_video_to_audio_tracks(video_path, audio_path):
 
 
 # This returns a dictionary with word, segment, and char level timestamps
-def transcribe_audio_parakeet(audio_paths: list[str]) -> dict:
+def transcribe_audio_parakeet(audio_paths: list[str]) -> list[dict]:
     print(f"Performing speaker transcription on audio... {audio_paths}")
 
     asr_model = asr.models.ASRModel.from_pretrained(model_name="nvidia/parakeet-tdt-0.6b-v3")
@@ -81,21 +81,20 @@ def transcribe_audio_parakeet(audio_paths: list[str]) -> dict:
         segment_timestamps = output[0].timestamp['segment'] # segment level timestamps
         char_timestamps = output[0].timestamp['char'] # char level timestamps
 
-
         print(f"Type of output: {type(output)}")
 
-        
-        print("\nWord-level Timestamps:")
-        for stamp in word_timestamps:
-            print(f"{stamp['start']}s - {stamp['end']}s : {stamp['word']}")
+        # print("\nWord-level Timestamps:")
+        # for stamp in word_timestamps:
+        #     print(f"{stamp['start']}s - {stamp['end']}s : {stamp['word']}")
 
-        print("\nSegment-level Timestamps:")
-        for stamp in segment_timestamps:
-            print(f"{stamp['start']}s - {stamp['end']}s : {stamp['segment']}")
+        if not len(segment_timestamps) == 0:        
+            print("\nSegment-level Timestamps:")
+            for stamp in segment_timestamps:
+                print(f"  {round(stamp['start'], 2)}s - {round(stamp['end'], 2)}s : {stamp['segment']}")
 
-        print("\nCharacter-level Timestamps:")
-        for stamp in char_timestamps:
-            print(f"{stamp['start']}s - {stamp['end']}s : {stamp['char']}")
+        # print("\nCharacter-level Timestamps:")
+        # for stamp in char_timestamps:
+        #     print(f"{stamp['start']}s - {stamp['end']}s : {stamp['char']}")
 
         outputs.append(output[0].timestamp)
 
