@@ -1,55 +1,168 @@
-
-
 # wisper
 
-**wisper** is an audio transcription tool designed to convert audio files into accurate, readable text. It is lightweight, easy to use, and leverages modern Python tooling for fast setup and reproducible environments.
+**wisper** is an audio transcription tool that extracts audio tracks from video files and transcribes them using NVIDIA NeMo ASR models. It produces structured transcripts with word, segment, and character-level timestamps.
 
 ## Features
-- Transcribe audio files to text with high accuracy
-- Batch processing for multiple files
-- Configurable output formats
-- Simple command-line interface
-- Fast environment setup using [uv](https://github.com/astral-sh/uv)
+
+- **Multi-track extraction** — automatically detects and extracts all audio tracks from video files via ffprobe/ffmpeg
+- **NVIDIA NeMo ASR** — transcription powered by the Parakeet TDT 0.6B model for high-accuracy speech recognition
+- **Speaker diarization** — optional single-track mode with streaming diarization and multitalker support
+- **Flexible CLI** — process specific files, entire directories, or audio-only workflows
+- **Multiple output formats** — JSON with full timestamp data or plain text
+- **Batch processing** — process all files in a directory with one command
+
+## Requirements
+
+- Python 3.13+
+- CUDA 12.8 compatible GPU
+- [ffmpeg](https://ffmpeg.org/) and ffprobe installed and on PATH
+- [uv](https://github.com/astral-sh/uv) (recommended package manager)
 
 ## Installation
 
 1. **Clone the repository:**
-	```bash
-	git clone https://github.com/yourusername/wisper.git
-	cd wisper
-	```
 
-2. **Install dependencies with [uv](https://github.com/astral-sh/uv):**
+   ```bash
+   git clone https://github.com/yourusername/wisper.git
+   cd wisper
+   ```
 
-	Using `uv` with a `pyproject.toml`:
-	```bash
-	uv sync --extra cu128
-	```
+2. **Install dependencies:**
+
+   ```bash
+   uv sync --extra cu128
+   ```
+
+## Quick Start
+
+Place video files in the `video/` directory and run:
+
+```bash
+python main.py
+```
+
+Transcripts are saved to `transcript/` as JSON files with word, segment, and character-level timestamps.
 
 ## Usage
 
-Run the main script to transcribe audio files:
-
-```bash
-uv pip install .  # if you want to install as a package
-python main.py --input audio/yourfile.wav --output transcript/yourfile.json
+```
+python main.py [OPTIONS]
 ```
 
-- Replace `audio/yourfile.wav` with your audio file path.
-- The transcript will be saved in the specified output location.
+### Input Selection
 
-## Configuration
+| Flag | Description |
+|------|-------------|
+| `--input, -i PATH` | Process a specific file or directory |
+| `--audio-only` | Transcribe audio files directly, skip video extraction |
+| `--tracks N [N ...]` | Only extract/transcribe specific track numbers (1-indexed) |
 
-You can adjust transcription settings in `multitalker_transcript_config.py` or use the provided JSON config files.
+### Directories
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--video-dir PATH` | `video/` | Video input directory |
+| `--audio-dir PATH` | `audio/` | Audio working directory |
+| `--output-dir PATH` | `transcript/` | Transcript output directory |
+
+### Output
+
+| Flag | Description |
+|------|-------------|
+| `--format {json,txt}` | Output format (default: `json`) |
+| `--model NAME` | ASR model (default: `nvidia/parakeet-tdt-0.6b-v3`) |
+| `--verbose, -v` | Show segment-level timestamps during transcription |
+| `--quiet, -q` | Suppress all output except errors and final file paths |
+
+### Behavior
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | List files that would be processed without running |
+| `--skip-existing` | Skip files that already have transcripts in the output directory |
+
+### Examples
+
+```bash
+# Process all videos in the default video/ directory
+python main.py
+
+# Process a single video file
+python main.py --input video/interview.mp4
+
+# Transcribe an existing audio file directly
+python main.py --audio-only --input audio/podcast.mp3
+
+# Transcribe all audio files in a custom directory
+python main.py --audio-only --audio-dir /path/to/recordings
+
+# Extract and transcribe only tracks 1 and 3
+python main.py --input video/recording.mkv --tracks 1 3
+
+# Output as plain text instead of JSON
+python main.py --format txt
+
+# Preview what would be processed
+python main.py --dry-run
+
+# Skip videos that already have transcripts
+python main.py --skip-existing
+
+# Verbose mode with a custom model
+python main.py --verbose --model nvidia/parakeet-tdt-1.1b
+```
+
+## Output Format
+
+### JSON (default)
+
+Each transcript is a JSON array with one entry per audio track. Each entry contains `word`, `segment`, and `char` arrays with start/end timestamps:
+
+```json
+[
+  {
+    "word": [{ "start": 0.0, "end": 0.32, "word": "Hello" }, ...],
+    "segment": [{ "start": 0.0, "end": 2.5, "segment": "Hello world" }, ...],
+    "char": [{ "start": 0.0, "end": 0.08, "char": "H" }, ...]
+  }
+]
+```
+
+### Plain Text (`--format txt`)
+
+```
+--- Track 1 ---
+0.0s - 2.5s : Hello world
+2.8s - 5.1s : This is a transcript
+```
 
 ## Project Structure
-- `main.py` — Main entry point for transcription
-- `audio/` — Place your audio files here
-- `transcript/` — Transcription outputs
-- `multitalker_transcript_config.py` — Configuration options
-- `pyproject.toml` — Project metadata and dependencies
+
+```
+wisper/
+├── main.py                          # Primary CLI entry point (multi-track pipeline)
+├── main_single_track.py             # Single-track pipeline with speaker diarization
+├── multitalker_transcript_config.py # Configuration for diarization and streaming ASR
+├── test_transcript.py               # Utility to replay transcripts with timing
+├── pyproject.toml                   # Project metadata and dependencies
+├── video/                           # Place input video files here
+├── audio/                           # Extracted audio tracks (auto-generated)
+└── transcript/                      # Output transcripts (auto-generated)
+```
+
+### Pipelines
+
+- **`main.py`** — Multi-track pipeline. Extracts all audio tracks from video via ffprobe/ffmpeg, transcribes each with the Parakeet TDT model, and saves structured JSON or text output.
+- **`main_single_track.py`** — Single-track pipeline with advanced features including streaming speaker diarization (Sortformer) and multitalker ASR for conversations with multiple speakers.
+
+### Models
+
+| Model | Purpose |
+|-------|---------|
+| `nvidia/parakeet-tdt-0.6b-v3` | Primary ASR transcription |
+| `nvidia/diar_streaming_sortformer_4spk-v2.1` | Speaker diarization (single-track mode) |
+| `nvidia/multitalker-parakeet-streaming-0.6b-v1` | Multitalker streaming ASR (single-track mode) |
 
 ## Contributing
+
 Contributions are welcome! Please open issues or submit pull requests for improvements and bug fixes.
-
-
