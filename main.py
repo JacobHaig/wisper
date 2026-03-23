@@ -2,11 +2,12 @@ import argparse
 import json
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, asdict
 from pathlib import Path
 
 import nemo.collections.asr as asr
-import yt_dlp
+from pytubefix import YouTube
 
 # --- Constants ---
 
@@ -16,6 +17,8 @@ TRANSCRIPT_DIR = Path("transcript")
 SUPPORTED_EXTENSIONS: frozenset[str] = frozenset({".mp4", ".mov", ".avi", ".mkv"})
 SUPPORTED_AUDIO_EXTENSIONS: frozenset[str] = frozenset({".mp3", ".wav", ".flac", ".ogg", ".m4a"})
 ASR_MODEL_NAME = "nvidia/parakeet-tdt-0.6b-v3"
+CHUNK_OVERLAP_SECONDS: float = 15.0
+DEFAULT_CHUNK_MINUTES: float = 5.0
 
 # --- Verbosity ---
 
@@ -79,6 +82,13 @@ def build_parser() -> argparse.ArgumentParser:
     # Behavior
     parser.add_argument("--dry-run", action="store_true", help="Show what would be processed without running")
     parser.add_argument("--skip-existing", action="store_true", help="Skip files that already have transcripts")
+    parser.add_argument(
+        "--chunk-minutes",
+        type=float,
+        default=DEFAULT_CHUNK_MINUTES,
+        metavar="N",
+        help=f"Split audio into N-minute chunks to avoid CUDA OOM on long files (default: {DEFAULT_CHUNK_MINUTES}). Use 0 to disable.",
+    )
 
     return parser
 
@@ -165,18 +175,147 @@ class TrackTranscript:
 def download_youtube_video(url: str, video_dir: Path) -> Path:
     """Download a YouTube video to video_dir and return the path to the file."""
     video_dir.mkdir(parents=True, exist_ok=True)
-    ydl_opts = {
-        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-        "outtmpl": str(video_dir / "%(title)s.%(ext)s"),
-        "quiet": _verbosity == 0,
-        "no_warnings": _verbosity == 0,
-    }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        return Path(ydl.prepare_filename(info))
+    yt = YouTube(url, on_progress_callback=lambda stream, chunk, remaining: (
+        _print(f"  Downloading... {100 - round(remaining / stream.filesize * 100)}%", level=2)
+    ))
+    _print(f"  Title: {yt.title}")
+    stream = yt.streams.get_highest_resolution()
+    out_path = stream.download(output_path=str(video_dir))
+    return Path(out_path)
+
+
+# --- Audio chunking ---
+
+def get_audio_duration_seconds(audio_path: Path) -> float:
+    """Return the duration of an audio file in seconds via ffprobe."""
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "json",
+            str(audio_path),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=True,
+    )
+    info = json.loads(result.stdout)
+    return float(info["format"]["duration"])
+
+
+def split_audio_into_chunks(
+    audio_path: Path,
+    chunk_seconds: float,
+    overlap_seconds: float,
+    temp_dir: Path,
+) -> list[tuple[Path, float]]:
+    """
+    Split an audio file into overlapping chunks using ffmpeg.
+    Returns a list of (chunk_path, offset_seconds) pairs.
+    If the file is shorter than chunk_seconds, returns [(audio_path, 0.0)] with no splitting.
+    """
+    duration = get_audio_duration_seconds(audio_path)
+
+    if duration <= chunk_seconds:
+        return [(audio_path, 0.0)]
+
+    stride = chunk_seconds - overlap_seconds
+    chunks: list[tuple[Path, float]] = []
+    start = 0.0
+    idx = 0
+
+    while start < duration:
+        chunk_dur = min(chunk_seconds, duration - start)
+        chunk_path = temp_dir / f"chunk_{idx:03d}.mp3"
+        subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-ss", str(start),
+                "-t", str(chunk_dur),
+                "-i", str(audio_path),
+                "-c", "copy",
+                str(chunk_path),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+        )
+        _print(f"  Chunk {idx + 1}: {start:.1f}s – {start + chunk_dur:.1f}s", level=2)
+        chunks.append((chunk_path, start))
+        start += stride
+        idx += 1
+
+    return chunks
+
+
+def merge_chunk_transcripts(
+    chunk_results: list[tuple[TrackTranscript, float]],
+    overlap_seconds: float,
+) -> TrackTranscript:
+    """
+    Merge per-chunk transcripts into one continuous TrackTranscript.
+    Timestamps are shifted by each chunk's offset. The midpoint of each
+    overlap window acts as the cut line — items before the midpoint come
+    from the earlier chunk, items from the midpoint onwards from the later chunk.
+    """
+    if len(chunk_results) == 1:
+        return chunk_results[0][0]
+
+    # Cut line between chunk i and chunk i+1: midpoint of their overlap
+    cuts: list[float] = []
+    for i in range(len(chunk_results) - 1):
+        next_offset = chunk_results[i + 1][1]
+        cuts.append(next_offset + overlap_seconds / 2)
+
+    all_words: list[WordTimestamp] = []
+    all_segments: list[SegmentTimestamp] = []
+    all_chars: list[CharTimestamp] = []
+
+    for i, (transcript, offset) in enumerate(chunk_results):
+        lower = cuts[i - 1] if i > 0 else 0.0
+        upper = cuts[i] if i < len(cuts) else float("inf")
+
+        for w in transcript.word:
+            adj_start = w.start + offset
+            if lower <= adj_start < upper:
+                all_words.append(WordTimestamp(start=adj_start, end=w.end + offset, word=w.word))
+
+        for s in transcript.segment:
+            adj_start = s.start + offset
+            if lower <= adj_start < upper:
+                all_segments.append(SegmentTimestamp(start=adj_start, end=s.end + offset, segment=s.segment))
+
+        for c in transcript.char:
+            adj_start = c.start + offset
+            if lower <= adj_start < upper:
+                all_chars.append(CharTimestamp(start=adj_start, end=c.end + offset, char=c.char))
+
+        _print(f"  Chunk {i + 1}: kept {len([w for w in transcript.word if lower <= w.start + offset < upper])} words in [{lower:.1f}s, {'∞' if upper == float('inf') else f'{upper:.1f}s'})", level=2)
+
+    return TrackTranscript(
+        word=sorted(all_words, key=lambda x: x.start),
+        segment=sorted(all_segments, key=lambda x: x.start),
+        char=sorted(all_chars, key=lambda x: x.start),
+    )
 
 
 # --- Pipeline functions ---
+
+def _output_to_transcript(output) -> TrackTranscript:
+    """Convert a NeMo ASR output to a TrackTranscript."""
+    ts = output.timestamp
+    transcript = TrackTranscript(
+        word=[WordTimestamp(start=w["start"], end=w["end"], word=w["word"]) for w in ts["word"]],
+        segment=[SegmentTimestamp(start=s["start"], end=s["end"], segment=s["segment"]) for s in ts["segment"]],
+        char=[CharTimestamp(start=c["start"], end=c["end"], char=c["char"]) for c in ts["char"]],
+    )
+    if transcript.segment:
+        _print("\nSegment-level Timestamps:", level=2)
+        for seg in transcript.segment:
+            _print(f"  {round(seg.start, 2)}s - {round(seg.end, 2)}s : {seg.segment}", level=2)
+    return transcript
+
 
 def convert_video_to_audio_tracks(video_path: Path, audio_dir: Path) -> list[Path]:
     """Extract all audio tracks from a video file as mono MP3s."""
@@ -224,29 +363,51 @@ def convert_video_to_audio_tracks(video_path: Path, audio_dir: Path) -> list[Pat
     return audio_paths
 
 
-def transcribe_audio_parakeet(audio_paths: list[Path], model_name: str = ASR_MODEL_NAME) -> list[TrackTranscript]:
-    """Transcribe audio files using NVIDIA Parakeet TDT model."""
-    str_paths = [str(p) for p in audio_paths]
-    _print(f"Performing transcription on: {str_paths}")
+def transcribe_audio_parakeet(
+    audio_paths: list[Path],
+    model_name: str = ASR_MODEL_NAME,
+    chunk_seconds: float | None = None,
+) -> list[TrackTranscript]:
+    """Transcribe audio files using NVIDIA Parakeet TDT model.
 
+    If chunk_seconds is set, each audio file is split into overlapping chunks
+    before transcription and the results are merged into one continuous transcript.
+    """
+    _print(f"Loading ASR model: {model_name}")
     asr_model = asr.models.ASRModel.from_pretrained(model_name=model_name)
-    outputs = asr_model.transcribe(str_paths, timestamps=True)
 
     transcripts: list[TrackTranscript] = []
-    for output in outputs:
-        ts = output.timestamp
-        transcript = TrackTranscript(
-            word=[WordTimestamp(start=w["start"], end=w["end"], word=w["word"]) for w in ts["word"]],
-            segment=[SegmentTimestamp(start=s["start"], end=s["end"], segment=s["segment"]) for s in ts["segment"]],
-            char=[CharTimestamp(start=c["start"], end=c["end"], char=c["char"]) for c in ts["char"]],
-        )
 
-        if transcript.segment:
-            _print("\nSegment-level Timestamps:", level=2)
-            for seg in transcript.segment:
-                _print(f"  {round(seg.start, 2)}s - {round(seg.end, 2)}s : {seg.segment}", level=2)
+    for audio_path in audio_paths:
+        _print(f"Transcribing: {audio_path.name}")
 
-        transcripts.append(transcript)
+        if chunk_seconds is None:
+            # Original one-shot path
+            outputs = asr_model.transcribe([str(audio_path)], timestamps=True)
+            transcripts.append(_output_to_transcript(outputs[0]))
+            continue
+
+        # Chunked path
+        with tempfile.TemporaryDirectory() as tmp:
+            chunks = split_audio_into_chunks(audio_path, chunk_seconds, CHUNK_OVERLAP_SECONDS, Path(tmp))
+
+            if len(chunks) == 1 and chunks[0][0] == audio_path:
+                # File is shorter than chunk size — transcribe directly
+                outputs = asr_model.transcribe([str(audio_path)], timestamps=True)
+                transcripts.append(_output_to_transcript(outputs[0]))
+                continue
+
+            n = len(chunks)
+            _print(f"  Split into {n} chunk(s) of {chunk_seconds / 60:.1f} min (overlap: {CHUNK_OVERLAP_SECONDS}s)")
+
+            chunk_results: list[tuple[TrackTranscript, float]] = []
+            for i, (chunk_path, offset) in enumerate(chunks):
+                _print(f"  Transcribing chunk {i + 1}/{n} (offset {offset:.1f}s)...")
+                outputs = asr_model.transcribe([str(chunk_path)], timestamps=True)
+                chunk_results.append((_output_to_transcript(outputs[0]), offset))
+
+            _print(f"  Merging {n} chunk transcripts...")
+            transcripts.append(merge_chunk_transcripts(chunk_results, CHUNK_OVERLAP_SECONDS))
 
     return transcripts
 
@@ -277,10 +438,15 @@ def save_transcript_as_text(transcripts: list[TrackTranscript], output_path: Pat
     _print(f"Transcript saved to {output_path}", level=0)
 
 
-def video_to_transcript(video_path: Path, audio_dir: Path, transcript_output_path: Path) -> None:
+def video_to_transcript(
+    video_path: Path,
+    audio_dir: Path,
+    transcript_output_path: Path,
+    chunk_seconds: float | None = None,
+) -> None:
     """Full pipeline: video -> audio tracks -> transcription -> JSON."""
     audio_paths = convert_video_to_audio_tracks(video_path, audio_dir)
-    transcripts = transcribe_audio_parakeet(audio_paths)
+    transcripts = transcribe_audio_parakeet(audio_paths, chunk_seconds=chunk_seconds)
     save_transcript_to_file(transcripts, transcript_output_path)
 
 
@@ -297,6 +463,15 @@ def main() -> None:
         _verbosity = 2
     else:
         _verbosity = 1
+
+    if args.chunk_minutes < 0:
+        print("Error: --chunk-minutes must be >= 0 (use 0 to disable chunking)", file=sys.stderr)
+        sys.exit(1)
+    if 0 < args.chunk_minutes < 0.5:
+        print("Error: --chunk-minutes must be >= 0.5 or 0 to disable", file=sys.stderr)
+        sys.exit(1)
+
+    chunk_seconds: float | None = args.chunk_minutes * 60.0 if args.chunk_minutes > 0 else None
 
     audio_dir: Path = args.audio_dir
     output_dir: Path = args.output_dir
@@ -345,7 +520,7 @@ def main() -> None:
                     continue
                 audio_paths = filtered
 
-        transcripts = transcribe_audio_parakeet(audio_paths, model_name=args.model)
+        transcripts = transcribe_audio_parakeet(audio_paths, model_name=args.model, chunk_seconds=chunk_seconds)
 
         if args.format == "txt":
             save_transcript_as_text(transcripts, output_path)

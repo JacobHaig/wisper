@@ -43,9 +43,11 @@ uv run test_transcript.py
 **Core pipeline in `main.py`:**
 1. `resolve_input_files()` — determines files from `--input`, `--audio-only`, or default directory scan
 2. `convert_video_to_audio_tracks()` — uses ffprobe to detect track count, ffmpeg to extract each as mono MP3
-3. `transcribe_audio_parakeet()` — loads `nvidia/parakeet-tdt-0.6b-v3` model, runs `asr_model.transcribe()` with timestamps; returns typed `TrackTranscript` dataclasses
+3. `transcribe_audio_parakeet()` — loads `nvidia/parakeet-tdt-0.6b-v3` model; if `--chunk-minutes > 0`, splits each audio file into overlapping chunks via ffmpeg, transcribes each independently, then merges into one continuous `TrackTranscript`; otherwise transcribes in one pass
 4. `save_transcript_to_file()` — writes JSON with word/segment/char timestamp arrays
 5. `save_transcript_as_text()` — writes plain text with `start - end : segment` lines (used when `--format txt`)
+
+**Audio chunking** (`--chunk-minutes`, default `5.0`): Long audio files are split into overlapping chunks using ffmpeg before transcription to avoid CUDA OOM. Each chunk is transcribed independently and the results are merged back into one single transcript — the output is identical in structure to a non-chunked run. The overlap window (15s, hardcoded as `CHUNK_OVERLAP_SECONDS`) prevents words being cut at boundaries. Use `--chunk-minutes 0` to disable chunking entirely.
 
 **NVIDIA models used:**
 - `nvidia/parakeet-tdt-0.6b-v3` — main ASR

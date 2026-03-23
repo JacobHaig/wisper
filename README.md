@@ -13,10 +13,13 @@
 
 ## Requirements
 
+> **GPU required.** wisper uses NVIDIA NeMo ASR models which require a CUDA-capable GPU. It will not run on CPU.
+
 - Python 3.13+
-- CUDA 12.8 compatible GPU
+- NVIDIA GPU with CUDA 12.8 support and **at least 8GB VRAM** (10GB+ recommended)
+- [CUDA 12.8 toolkit](https://developer.nvidia.com/cuda-12-8-0-download-archive) installed
 - [ffmpeg](https://ffmpeg.org/) and ffprobe installed and on PATH
-- [uv](https://github.com/astral-sh/uv) (recommended package manager)
+- [uv](https://github.com/astral-sh/uv) package manager
 
 ## Installation
 
@@ -27,11 +30,13 @@
    cd wisper
    ```
 
-2. **Install dependencies:**
+2. **Install dependencies (with CUDA 12.8 PyTorch):**
 
    ```bash
    uv sync --extra cu128
    ```
+
+   The `cu128` extra installs PyTorch built for CUDA 12.8. This is required — there is no CPU fallback.
 
 ## Quick Start
 
@@ -81,6 +86,7 @@ uv run main.py [OPTIONS]
 |------|-------------|
 | `--dry-run` | List files that would be processed without running |
 | `--skip-existing` | Skip files that already have transcripts in the output directory |
+| `--chunk-minutes N` | Split audio into N-minute chunks before transcribing to avoid CUDA OOM on long files (default: `5.0`). Use `0` to disable and process the full file in one pass. |
 
 ### Examples
 
@@ -114,6 +120,12 @@ uv run main.py --verbose --model nvidia/parakeet-tdt-1.1b
 
 # Download and transcribe a YouTube video
 uv run main.py --youtube "https://www.youtube.com/watch?v=..."
+
+# Transcribe a long file without chunking (caution: may OOM on large GPUs)
+uv run main.py --chunk-minutes 0 --input video/longfile.mp4
+
+# Use smaller chunks if still hitting OOM
+uv run main.py --chunk-minutes 3 --input video/longfile.mp4
 ```
 
 ## Output Format
