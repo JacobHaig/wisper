@@ -1,7 +1,6 @@
 # This file simply runs thorugh json files that are generated from main.py
 
 import time
-
 import json
 
 
@@ -33,11 +32,13 @@ def print_transcript_in_time(transcript: dict):
 
 def main():
     input_path = "transcript/Triple_kill_at_3_06_59.json"  # Update with your transcript file path
-    transcript = load_transcript_from_file(input_path)
+    tracks = load_transcript_from_file(input_path)
     print("Loaded Transcript:")
-    # print(json.dumps(transcript, indent=2))
 
-    print_transcript_in_time(transcript)
+    for i, track in enumerate(tracks):
+        if len(tracks) > 1:
+            print(f"\n--- Track {i + 1} ---")
+        print_transcript_in_time(track)
 
 
 

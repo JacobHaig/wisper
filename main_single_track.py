@@ -77,7 +77,7 @@ def transcribe_audio_multitalker_parakeet(audio_path: str, transcript_output_pat
             "Unexpected audio data shape: {}".format(data.shape))
 
     # --- Continue with NeMo pipeline ---
-    diar_model = SortformerEncLabelModel.from_pretrained("nvidia/diar_streaming_sortformer_4spk-v2").eval().to(device)
+    diar_model = SortformerEncLabelModel.from_pretrained("nvidia/diar_streaming_sortformer_4spk-v2.1").eval().to(device)
     asr_model = ASRModel.from_pretrained("nvidia/multitalker-parakeet-streaming-0.6b-v1").eval().to(device)
 
 

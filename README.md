@@ -38,7 +38,7 @@
 Place video files in the `video/` directory and run:
 
 ```bash
-python main.py
+uv run main.py
 ```
 
 Transcripts are saved to `transcript/` as JSON files with word, segment, and character-level timestamps.
@@ -46,7 +46,7 @@ Transcripts are saved to `transcript/` as JSON files with word, segment, and cha
 ## Usage
 
 ```
-python main.py [OPTIONS]
+uv run main.py [OPTIONS]
 ```
 
 ### Input Selection
@@ -56,6 +56,7 @@ python main.py [OPTIONS]
 | `--input, -i PATH` | Process a specific file or directory |
 | `--audio-only` | Transcribe audio files directly, skip video extraction |
 | `--tracks N [N ...]` | Only extract/transcribe specific track numbers (1-indexed) |
+| `--youtube URL` | Download a YouTube video and transcribe it (cannot combine with `--input` or `--audio-only`) |
 
 ### Directories
 
@@ -85,31 +86,34 @@ python main.py [OPTIONS]
 
 ```bash
 # Process all videos in the default video/ directory
-python main.py
+uv run main.py
 
 # Process a single video file
-python main.py --input video/interview.mp4
+uv run main.py --input video/interview.mp4
 
 # Transcribe an existing audio file directly
-python main.py --audio-only --input audio/podcast.mp3
+uv run main.py --audio-only --input audio/podcast.mp3
 
 # Transcribe all audio files in a custom directory
-python main.py --audio-only --audio-dir /path/to/recordings
+uv run main.py --audio-only --audio-dir /path/to/recordings
 
 # Extract and transcribe only tracks 1 and 3
-python main.py --input video/recording.mkv --tracks 1 3
+uv run main.py --input video/recording.mkv --tracks 1 3
 
 # Output as plain text instead of JSON
-python main.py --format txt
+uv run main.py --format txt
 
 # Preview what would be processed
-python main.py --dry-run
+uv run main.py --dry-run
 
 # Skip videos that already have transcripts
-python main.py --skip-existing
+uv run main.py --skip-existing
 
 # Verbose mode with a custom model
-python main.py --verbose --model nvidia/parakeet-tdt-1.1b
+uv run main.py --verbose --model nvidia/parakeet-tdt-1.1b
+
+# Download and transcribe a YouTube video
+uv run main.py --youtube "https://www.youtube.com/watch?v=..."
 ```
 
 ## Output Format

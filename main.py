@@ -6,6 +6,7 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 
 import nemo.collections.asr as asr
+import yt_dlp
 
 # --- Constants ---
 
@@ -67,6 +68,13 @@ def build_parser() -> argparse.ArgumentParser:
     verbosity = parser.add_mutually_exclusive_group()
     verbosity.add_argument("--verbose", "-v", action="store_true", help="Show segment-level timestamps during transcription")
     verbosity.add_argument("--quiet", "-q", action="store_true", help="Suppress all output except errors and final path")
+
+    # YouTube
+    parser.add_argument(
+        "--youtube",
+        metavar="URL",
+        help="Download a YouTube video and transcribe it",
+    )
 
     # Behavior
     parser.add_argument("--dry-run", action="store_true", help="Show what would be processed without running")
@@ -150,6 +158,22 @@ class TrackTranscript:
             "segment": [asdict(s) for s in self.segment],
             "char": [asdict(c) for c in self.char],
         }
+
+
+# --- YouTube download ---
+
+def download_youtube_video(url: str, video_dir: Path) -> Path:
+    """Download a YouTube video to video_dir and return the path to the file."""
+    video_dir.mkdir(parents=True, exist_ok=True)
+    ydl_opts = {
+        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "outtmpl": str(video_dir / "%(title)s.%(ext)s"),
+        "quiet": _verbosity == 0,
+        "no_warnings": _verbosity == 0,
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        return Path(ydl.prepare_filename(info))
 
 
 # --- Pipeline functions ---
@@ -276,13 +300,23 @@ def main() -> None:
 
     audio_dir: Path = args.audio_dir
     output_dir: Path = args.output_dir
-    input_files = resolve_input_files(args)
 
-    if args.dry_run:
-        print(f"Would process {len(input_files)} file(s):")
-        for f in input_files:
-            print(f"  {f}")
-        return
+    if args.youtube:
+        if args.input or args.audio_only:
+            print("Error: --youtube cannot be combined with --input or --audio-only", file=sys.stderr)
+            sys.exit(1)
+        if args.dry_run:
+            print(f"Would download and transcribe: {args.youtube}")
+            return
+        _print(f"Downloading: {args.youtube}")
+        input_files = [download_youtube_video(args.youtube, args.video_dir)]
+    else:
+        input_files = resolve_input_files(args)
+        if args.dry_run:
+            print(f"Would process {len(input_files)} file(s):")
+            for f in input_files:
+                print(f"  {f}")
+            return
 
     for filepath in input_files:
         ext = ".txt" if args.format == "txt" else ".json"
