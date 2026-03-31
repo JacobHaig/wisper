@@ -4,9 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-wisper is an audio transcription tool with two modes:
+wisper is an audio transcription tool with three modes:
 1. **Batch CLI** — extracts audio tracks from video files and transcribes them using NVIDIA NeMo ASR models (Parakeet TDT 0.6b). Produces JSON transcripts with word, segment, and character-level timestamps.
-2. **Real-time service** — captures live audio from microphone and/or desktop (WASAPI loopback) and transcribes continuously, serving results via a FastAPI REST + WebSocket API.
+2. **Real-time service** — captures live audio from microphone, desktop (WASAPI loopback), or a network audio stream (RTP/RTSP/UDP) and transcribes continuously, serving results via a FastAPI REST + WebSocket API.
+3. **Single-track with diarization** — alternative pipeline with streaming speaker diarization (Sortformer) for conversations with multiple speakers.
 
 ## Setup & Running
 
@@ -43,6 +44,10 @@ uv run serve.py --source both
 # Both mic + desktop mixed into one stream
 uv run serve.py --source both --mix mixed
 
+# Network audio stream (RTP/RTSP/UDP) via ffmpeg
+uv run serve.py --source network --stream-url rtp://0.0.0.0:5004
+uv run serve.py --stream-url rtsp://192.168.1.10/live   # auto-sets --source=network
+
 # Custom port and chunk size
 uv run serve.py --port 9000 --chunk-seconds 5.0
 
@@ -68,7 +73,7 @@ uv run serve.py --port 9000 --chunk-seconds 5.0
 - `serve.py` — CLI entry point for the real-time transcription service. Starts audio capture + ASR workers + FastAPI server.
 - `server.py` — FastAPI application with REST and WebSocket endpoints for querying live transcription.
 - `models.py` — Shared data types (`WordTimestamp`, `SegmentTimestamp`, `CharTimestamp`, `TrackTranscript`, `LiveWord`) used by both batch and real-time pipelines.
-- `audio_capture.py` — Audio source abstraction using `sounddevice`. Supports mic, desktop (WASAPI loopback), or both in separate/mixed modes.
+- `audio_capture.py` — Audio source abstraction. Supports mic (sounddevice), desktop (WASAPI loopback), or network stream (ffmpeg subprocess piping PCM to the queue). All sources produce the same float32/16kHz chunks regardless of origin.
 - `realtime_asr.py` — Chunked Parakeet TDT worker that reads audio from a queue, runs inference, deduplicates overlap, and writes results to a `TranscriptStore`.
 - `transcript_store.py` — Thread-safe accumulator for live transcription results. Rolling word/segment buffer, HTTP pop queue, and WebSocket subscriber queues.
 - `main_single_track.py` — Alternative pipeline with speaker diarization (Sortformer) and multitalker streaming transcription support. Uses moviepy for audio extraction.
@@ -90,7 +95,9 @@ uv run serve.py --port 9000 --chunk-seconds 5.0
 - `nvidia/multitalker-parakeet-streaming-0.6b-v1` — multitalker ASR (single-track mode)
 
 **Real-time service architecture:**
-- Audio capture thread(s) (sounddevice callback) → `queue.Queue[np.ndarray]`
+- Audio capture → `queue.Queue[np.ndarray]` (float32, 16kHz mono)
+  - **mic/desktop**: sounddevice callback with on-the-fly resampling
+  - **network**: ffmpeg subprocess piping PCM via stdout, read in a background thread
 - ASR worker thread (reads queue, runs Parakeet TDT on 3s chunks with 1s overlap, deduplicates) → `TranscriptStore`
 - FastAPI/uvicorn (async HTTP + WebSocket, reads from store)
 

@@ -1,10 +1,12 @@
-"""Audio capture from microphone and desktop (WASAPI loopback) on Windows."""
+"""Audio capture from microphone, desktop (WASAPI loopback), or network stream."""
 
 from __future__ import annotations
 
 import logging
 import queue
+import subprocess
 import sys
+import threading
 from enum import Enum
 
 import numpy as np
@@ -17,6 +19,7 @@ class AudioSource(str, Enum):
     MIC = "mic"
     DESKTOP = "desktop"
     BOTH = "both"
+    NETWORK = "network"
 
 
 class MixMode(str, Enum):
@@ -93,20 +96,26 @@ class AudioCapture:
         sample_rate: int = 16_000,
         chunk_duration: float = 0.5,
         device_index: int | None = None,
+        stream_url: str | None = None,
     ) -> None:
         self.source = source
         self.mix_mode = mix_mode
         self.sample_rate = sample_rate
         self.chunk_duration = chunk_duration
         self.device_index = device_index
+        self.stream_url = stream_url
 
         self._streams: list[sd.InputStream] = []
         self._running = False
+        self._stop_event = threading.Event()
+        self._ffmpeg_proc: subprocess.Popen | None = None
+        self._network_thread: threading.Thread | None = None
 
         # Output queues — consumers read from these
         self.mic_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=60)
         self.desktop_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=60)
         self.mixed_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=60)
+        self.network_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=60)
 
     @property
     def is_running(self) -> bool:
@@ -118,6 +127,8 @@ class AudioCapture:
             return {"mic": self.mic_queue}
         elif self.source == AudioSource.DESKTOP:
             return {"desktop": self.desktop_queue}
+        elif self.source == AudioSource.NETWORK:
+            return {"network": self.network_queue}
         elif self.mix_mode == MixMode.MIXED:
             return {"mixed": self.mixed_queue}
         else:
@@ -188,6 +199,68 @@ class AudioCapture:
 
         return callback
 
+    def _build_ffmpeg_cmd(self) -> list[str]:
+        cmd = [
+            "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "warning",
+        ]
+        url = self.stream_url
+        if url.startswith(("rtp://", "udp://")):
+            cmd += ["-protocol_whitelist", "file,udp,rtp,pipe,crypto"]
+        cmd += [
+            "-i", url,
+            "-vn",                        # drop video tracks
+            "-acodec", "pcm_s16le",
+            "-ar", str(self.sample_rate),
+            "-ac", "1",
+            "-f", "s16le",
+            "pipe:1",
+        ]
+        return cmd
+
+    def _run_network_reader(self) -> None:
+        chunk_samples = int(self.sample_rate * self.chunk_duration)
+        bytes_per_chunk = chunk_samples * 2  # int16 = 2 bytes per sample
+
+        cmd = self._build_ffmpeg_cmd()
+        logger.info("Network stream: url=%s", self.stream_url)
+        logger.debug("ffmpeg command: %s", " ".join(cmd))
+
+        try:
+            self._ffmpeg_proc = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=None, bufsize=0,
+            )
+        except FileNotFoundError:
+            logger.error("ffmpeg not found on PATH — cannot start network stream")
+            return
+
+        proc = self._ffmpeg_proc
+        try:
+            while not self._stop_event.is_set():
+                raw = proc.stdout.read(bytes_per_chunk)
+                if not raw:
+                    if not self._stop_event.is_set():
+                        logger.warning("Network stream ended (ffmpeg exited)")
+                    break
+                if len(raw) < bytes_per_chunk:
+                    continue
+
+                audio = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+                try:
+                    self.network_queue.put_nowait(audio)
+                except queue.Full:
+                    try:
+                        self.network_queue.get_nowait()
+                    except queue.Empty:
+                        pass
+                    try:
+                        self.network_queue.put_nowait(audio)
+                    except queue.Full:
+                        pass
+        finally:
+            proc.stdout.close()
+            proc.wait(timeout=3)
+            logger.info("Network reader thread exiting")
+
     def _open_mic_stream(self, target_queue: queue.Queue[np.ndarray]) -> sd.InputStream:
         device = self.device_index if self.source == AudioSource.MIC else None
         device_info = sd.query_devices(device or sd.default.device[0], "input")
@@ -253,6 +326,17 @@ class AudioCapture:
                 stream = self._open_desktop_stream(self.desktop_queue)
             self._streams.append(stream)
 
+        if self.source == AudioSource.NETWORK:
+            if not self.stream_url:
+                raise ValueError("stream_url is required when source=NETWORK")
+            self._stop_event.clear()
+            self._network_thread = threading.Thread(
+                target=self._run_network_reader,
+                daemon=True,
+                name="network-stream-reader",
+            )
+            self._network_thread.start()
+
         for stream in self._streams:
             stream.start()
         self._running = True
@@ -261,9 +345,19 @@ class AudioCapture:
     def stop(self) -> None:
         if not self._running:
             return
+
         for stream in self._streams:
             stream.stop()
             stream.close()
         self._streams.clear()
+
+        if self._network_thread is not None:
+            self._stop_event.set()
+            if self._ffmpeg_proc is not None:
+                self._ffmpeg_proc.terminate()
+            self._network_thread.join(timeout=5)
+            self._network_thread = None
+            self._ffmpeg_proc = None
+
         self._running = False
         logger.info("Audio capture stopped")

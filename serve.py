@@ -1,19 +1,25 @@
 """CLI entry point for the wisper real-time transcription service.
 
 Usage:
-    uv run serve.py                        # mic only, default settings
-    uv run serve.py --source desktop       # desktop audio (WASAPI loopback)
-    uv run serve.py --source both          # mic + desktop
-    uv run serve.py --source both --mix mixed   # mic + desktop mixed into one stream
-    uv run serve.py --port 9000            # custom port
+    uv run serve.py                                          # mic only, default settings
+    uv run serve.py --source desktop                         # desktop audio (WASAPI loopback)
+    uv run serve.py --source both                            # mic + desktop
+    uv run serve.py --source both --mix mixed                # mic + desktop mixed into one stream
+    uv run serve.py --source network --stream-url rtp://0.0.0.0:5004   # RTP stream
+    uv run serve.py --stream-url rtsp://192.168.1.10/live    # RTSP (auto-sets --source=network)
+    uv run serve.py --port 9000                              # custom port
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from contextlib import asynccontextmanager
+
+# Suppress tqdm progress bars (NeMo prints "Transcribing: 1it [...]" per chunk)
+os.environ.setdefault("TQDM_DISABLE", "1")
 
 import uvicorn
 from fastapi import FastAPI
@@ -32,9 +38,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--source",
         type=str,
-        choices=["mic", "desktop", "both"],
+        choices=["mic", "desktop", "both", "network"],
         default="mic",
         help="Audio source (default: mic)",
+    )
+    parser.add_argument(
+        "--stream-url",
+        type=str,
+        default=None,
+        metavar="URL",
+        help="Network audio stream URL, e.g. rtp://0.0.0.0:5004 or rtsp://host/path. Implies --source=network.",
     )
     parser.add_argument(
         "--mix",
@@ -83,6 +96,27 @@ def main() -> None:
         datefmt="%H:%M:%S",
     )
 
+    # NeMo/Lhotse use their own handlers with custom formatters that ignore
+    # logger.setLevel(). Filter by source file path instead — reliable regardless
+    # of how NeMo routes its messages internally.
+    _BLOCKED_PATHS = ("nemo", "lhotse", "nv_one_logger", "numexpr", "torch" + "/distributed")
+
+    class _BlockThirdPartyFilter(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            path = record.pathname.lower().replace("\\", "/")
+            return not any(p in path for p in _BLOCKED_PATHS)
+
+    for _handler in logging.root.handlers:
+        _handler.addFilter(_BlockThirdPartyFilter())
+
+
+    # --stream-url implies --source=network
+    if args.stream_url and args.source == "mic":
+        args.source = "network"
+    if args.source == "network" and not args.stream_url:
+        print("Error: --source=network requires --stream-url", file=sys.stderr)
+        sys.exit(1)
+
     source = AudioSource(args.source)
     mix_mode = MixMode(args.mix)
 
@@ -95,6 +129,7 @@ def main() -> None:
         source=source,
         mix_mode=mix_mode,
         device_index=args.device_index,
+        stream_url=args.stream_url,
     )
 
     audio_queues = capture.get_queues()

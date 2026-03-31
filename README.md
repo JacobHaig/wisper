@@ -2,9 +2,20 @@
 
 **wisper** is an audio transcription tool with two modes: batch file transcription and a real-time transcription service. Powered by NVIDIA NeMo ASR models (Parakeet TDT 0.6B).
 
+## Modes
+
+wisper has three distinct modes — pick the one that fits your use case:
+
+| Mode | Entry point | Use when |
+|------|------------|----------|
+| **Real-time service** | `serve.py` | You want live transcription from a mic, desktop audio, or a network stream, queryable via REST/WebSocket |
+| **Batch transcription** | `main.py` | You have video or audio files to transcribe offline |
+| **Single-track + diarization** | `main_single_track.py` | You need speaker labels in a single-speaker recording |
+
 ## Features
 
-- **Real-time transcription** — captures live audio from microphone and/or desktop (WASAPI loopback) and transcribes continuously
+- **Real-time transcription** — captures live audio from microphone, desktop (WASAPI loopback), or a network stream (RTP/RTSP/UDP) and transcribes continuously
+- **Network stream input** — pipe audio from any source ffmpeg can decode (IP cameras, remote mics, broadcast feeds) over RTP, RTSP, or UDP
 - **REST + WebSocket API** — query the latest word, sentence, last N words, or subscribe to a real-time word stream
 - **Push and pull models** — poll endpoints for latest transcription, consume words from a queue, or receive words via WebSocket as they're spoken
 - **Multi-track extraction** — automatically detects and extracts all audio tracks from video files via ffprobe/ffmpeg
@@ -62,6 +73,21 @@ uv run serve.py --source both
 
 # Both mic + desktop mixed into one stream
 uv run serve.py --source both --mix mixed
+
+# Network audio stream (RTP, RTSP, UDP — requires ffmpeg on PATH)
+uv run serve.py --source network --stream-url rtp://0.0.0.0:5004
+uv run serve.py --stream-url rtsp://192.168.1.10/live   # auto-detects --source=network
+uv run serve.py --stream-url udp://0.0.0.0:5005
+```
+
+To send audio to the network source from another machine:
+
+```bash
+# Stream a microphone over RTP using ffmpeg
+ffmpeg -f dshow -i audio="Microphone" -acodec pcm_s16le -ar 16000 -ac 1 -f rtp rtp://SERVER_IP:5004
+
+# Stream from a file in a loop
+ffmpeg -re -stream_loop -1 -i audio.mp3 -acodec pcm_s16le -ar 16000 -ac 1 -f rtp rtp://SERVER_IP:5004
 ```
 
 Then query the API:
@@ -105,12 +131,13 @@ uv run serve.py [OPTIONS]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--source {mic,desktop,both}` | `mic` | Audio source to capture |
+| `--source {mic,desktop,both,network}` | `mic` | Audio source to capture |
+| `--stream-url URL` | — | Network stream URL (implies `--source=network`). Supports `rtp://`, `rtsp://`, `udp://`, `tcp://` |
 | `--mix {separate,mixed}` | `separate` | When `--source=both`: keep separate transcripts or mix into one |
 | `--host HOST` | `127.0.0.1` | Bind address |
 | `--port PORT` | `8000` | Port |
 | `--chunk-seconds N` | `3.0` | Seconds of audio to accumulate before ASR inference |
-| `--device-index N` | auto | Override audio device index |
+| `--device-index N` | auto | Override audio device index (mic/desktop only) |
 | `--model NAME` | `nvidia/parakeet-tdt-0.6b-v3` | ASR model |
 | `--log-level` | `INFO` | Logging level |
 
@@ -238,7 +265,7 @@ Each transcript is a JSON array with one entry per audio track. Each entry conta
 wisper/
 ├── serve.py                         # Real-time service CLI entry point
 ├── server.py                        # FastAPI app (REST + WebSocket endpoints)
-├── audio_capture.py                 # Mic + desktop audio capture (sounddevice/WASAPI)
+├── audio_capture.py                 # Audio capture: mic, desktop (WASAPI), or network stream (ffmpeg)
 ├── realtime_asr.py                  # Chunked Parakeet ASR worker for real-time
 ├── transcript_store.py              # Thread-safe transcript accumulator
 ├── models.py                        # Shared data types (timestamps, LiveWord)

@@ -95,9 +95,70 @@ class ChunkedParakeetWorker:
 
     def _load_model(self):
         import nemo.collections.asr as asr
+
         logger.info("Loading ASR model: %s", self.model_name)
         self._asr_model = asr.models.ASRModel.from_pretrained(model_name=self.model_name)
+
+        # Suppress NeMo/Lhotse logging AFTER model load — loggers are created lazily
+        # during from_pretrained, so suppressing before has no effect on them.
+        self._suppress_third_party_logging()
+
+        # Fix config to eliminate warnings on every transcribe() call
+        self._fix_model_config()
+
         logger.info("ASR model loaded")
+
+    def _suppress_third_party_logging(self) -> None:
+        from nemo.utils import logging as nemo_log
+
+        # NeMo has its own Logger wrapper with its own handlers — clear them directly
+        nemo_log.setLevel(logging.ERROR)
+        if hasattr(nemo_log, "_logger"):
+            nl = nemo_log._logger
+            nl.handlers.clear()
+            nl.addHandler(logging.NullHandler())
+            nl.setLevel(logging.ERROR)
+            nl.propagate = False
+
+        # Suppress all noisy Python loggers (created lazily, so scan after model load)
+        _noisy_prefixes = ("nemo", "lhotse", "nv_one_logger", "torch.distributed", "numexpr")
+        for name in list(logging.root.manager.loggerDict):
+            if any(name.lower().startswith(p) for p in _noisy_prefixes):
+                lg = logging.getLogger(name)
+                lg.handlers.clear()
+                lg.addHandler(logging.NullHandler())
+                lg.setLevel(logging.ERROR)
+                lg.propagate = False
+        # Lhotse uses the literal logger name "root"
+        for name in ("root", "NeMo"):
+            lg = logging.getLogger(name)
+            lg.handlers.clear()
+            lg.addHandler(logging.NullHandler())
+            lg.setLevel(logging.ERROR)
+            lg.propagate = False
+
+    def _fix_model_config(self) -> None:
+        from omegaconf import open_dict, OmegaConf
+
+        cfg = self._asr_model.cfg
+        cfg_yaml = OmegaConf.to_yaml(cfg)
+
+        # Find which top-level config sections actually contain the noisy keys
+        # so we know the real paths (they vary by model version)
+        keys_found = [line.strip() for line in cfg_yaml.splitlines()
+                      if "pretokenize" in line or "use_start_end_token" in line]
+        if keys_found:
+            logger.debug("Config keys to patch: %s", keys_found)
+
+        with open_dict(cfg):
+            for ds_key in ("train_ds", "validation_ds", "test_ds", "dataset", "model"):
+                ds = getattr(cfg, ds_key, None)
+                if ds is None:
+                    continue
+                if hasattr(ds, "pretokenize"):
+                    ds.pretokenize = False
+                if hasattr(ds, "use_start_end_token"):
+                    del ds.use_start_end_token
 
     def _run(self) -> None:
         self._load_model()
@@ -164,7 +225,7 @@ class ChunkedParakeetWorker:
 
         try:
             sf.write(str(tmp_path), audio, self.sample_rate)
-            outputs = self._asr_model.transcribe([str(tmp_path)], timestamps=True)
+            outputs = self._asr_model.transcribe([str(tmp_path)], timestamps=True, verbose=False)
         finally:
             tmp_path.unlink(missing_ok=True)
 
@@ -197,8 +258,8 @@ class ChunkedParakeetWorker:
             new_segments.append(seg["segment"])
 
         if new_live_words:
-            logger.debug(
-                "Transcribed %d new words (skipped %d overlap), source=%s",
+            logger.info(
+                "Transcribed %d new word(s) (skipped %d overlap), source=%s",
                 len(new_live_words), skip, self.source_label,
             )
 
