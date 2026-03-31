@@ -3,11 +3,13 @@ import json
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass, asdict
+from dataclasses import asdict
 from pathlib import Path
 
 import nemo.collections.asr as asr
 from pytubefix import YouTube
+
+from models import CharTimestamp, SegmentTimestamp, TrackTranscript, WordTimestamp
 
 # --- Constants ---
 
@@ -131,43 +133,6 @@ def resolve_input_files(args: argparse.Namespace) -> list[Path]:
         print(f"Error: no supported files found in {scan_dir}", file=sys.stderr)
         sys.exit(1)
     return files
-
-
-# --- Typed transcript structures ---
-
-@dataclass(frozen=True, slots=True)
-class WordTimestamp:
-    start: float
-    end: float
-    word: str
-
-
-@dataclass(frozen=True, slots=True)
-class SegmentTimestamp:
-    start: float
-    end: float
-    segment: str
-
-
-@dataclass(frozen=True, slots=True)
-class CharTimestamp:
-    start: float
-    end: float
-    char: str
-
-
-@dataclass(frozen=True, slots=True)
-class TrackTranscript:
-    word: list[WordTimestamp]
-    segment: list[SegmentTimestamp]
-    char: list[CharTimestamp]
-
-    def to_dict(self) -> dict:
-        return {
-            "word": [asdict(w) for w in self.word],
-            "segment": [asdict(s) for s in self.segment],
-            "char": [asdict(c) for c in self.char],
-        }
 
 
 # --- YouTube download ---

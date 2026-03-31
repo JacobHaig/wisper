@@ -1,9 +1,12 @@
 # wisper
 
-**wisper** is an audio transcription tool that extracts audio tracks from video files and transcribes them using NVIDIA NeMo ASR models. It produces structured transcripts with word, segment, and character-level timestamps.
+**wisper** is an audio transcription tool with two modes: batch file transcription and a real-time transcription service. Powered by NVIDIA NeMo ASR models (Parakeet TDT 0.6B).
 
 ## Features
 
+- **Real-time transcription** — captures live audio from microphone and/or desktop (WASAPI loopback) and transcribes continuously
+- **REST + WebSocket API** — query the latest word, sentence, last N words, or subscribe to a real-time word stream
+- **Push and pull models** — poll endpoints for latest transcription, consume words from a queue, or receive words via WebSocket as they're spoken
 - **Multi-track extraction** — automatically detects and extracts all audio tracks from video files via ffprobe/ffmpeg
 - **NVIDIA NeMo ASR** — transcription powered by the Parakeet TDT 0.6B model for high-accuracy speech recognition
 - **Speaker diarization** — optional single-track mode with streaming diarization and multitalker support
@@ -20,6 +23,7 @@
 - [CUDA 12.8 toolkit](https://developer.nvidia.com/cuda-12-8-0-download-archive) installed
 - [ffmpeg](https://ffmpeg.org/) and ffprobe installed and on PATH
 - [uv](https://github.com/astral-sh/uv) package manager
+- **Windows:** [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) — required to compile the `editdistance` C extension (a dependency of `nemo-toolkit`). During installation, select the **"Desktop development with C++"** workload.
 
 ## Installation
 
@@ -38,7 +42,50 @@
 
    The `cu128` extra installs PyTorch built for CUDA 12.8. This is required — there is no CPU fallback.
 
+   > **Build error with `editdistance`?** If you see `error: Microsoft Visual C++ 14.0 or greater is required`, install the [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) (select "Desktop development with C++"), then re-run `uv sync --extra cu128`.
+
 ## Quick Start
+
+### Real-Time Service
+
+Start the real-time transcription service:
+
+```bash
+# Transcribe from your microphone
+uv run serve.py
+
+# Transcribe desktop audio (Windows WASAPI loopback)
+uv run serve.py --source desktop
+
+# Both mic + desktop as separate streams
+uv run serve.py --source both
+
+# Both mic + desktop mixed into one stream
+uv run serve.py --source both --mix mixed
+```
+
+Then query the API:
+
+```bash
+# Get the last word spoken
+curl http://localhost:8000/api/last-word
+
+# Get the last sentence
+curl http://localhost:8000/api/last-segment
+
+# Get the last 50 words
+curl http://localhost:8000/api/last-words?n=50
+
+# Consume the next word from the queue (deleted after read)
+curl http://localhost:8000/api/pop-word
+
+# Connect via WebSocket for real-time push
+websocat ws://localhost:8000/ws/stream
+```
+
+When running with `--source both` (default `--mix separate`), add `?source=mic` or `?source=desktop` to any endpoint.
+
+### Batch File Transcription
 
 Place video files in the `video/` directory and run:
 
@@ -49,6 +96,39 @@ uv run main.py
 Transcripts are saved to `transcript/` as JSON files with word, segment, and character-level timestamps.
 
 ## Usage
+
+### Real-Time Service (`serve.py`)
+
+```
+uv run serve.py [OPTIONS]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--source {mic,desktop,both}` | `mic` | Audio source to capture |
+| `--mix {separate,mixed}` | `separate` | When `--source=both`: keep separate transcripts or mix into one |
+| `--host HOST` | `127.0.0.1` | Bind address |
+| `--port PORT` | `8000` | Port |
+| `--chunk-seconds N` | `3.0` | Seconds of audio to accumulate before ASR inference |
+| `--device-index N` | auto | Override audio device index |
+| `--model NAME` | `nvidia/parakeet-tdt-0.6b-v3` | ASR model |
+| `--log-level` | `INFO` | Logging level |
+
+#### API Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/status` | Service status, sources, word counts |
+| `GET /api/last-word` | Most recent word |
+| `GET /api/last-segment` | Most recent sentence/segment |
+| `GET /api/last-words?n=100` | Last N words (rolling buffer) |
+| `GET /api/pop-word` | Next word from queue (consumed on read) |
+| `GET /api/pop-words?n=10` | Next N words from queue (consumed on read) |
+| `WS /ws/stream` | Real-time push of words as recognized |
+
+All endpoints accept `?source=mic` or `?source=desktop` when running in separate mode.
+
+### Batch Transcription (`main.py`)
 
 ```
 uv run main.py [OPTIONS]
@@ -156,7 +236,13 @@ Each transcript is a JSON array with one entry per audio track. Each entry conta
 
 ```
 wisper/
-├── main.py                          # Primary CLI entry point (multi-track pipeline)
+├── serve.py                         # Real-time service CLI entry point
+├── server.py                        # FastAPI app (REST + WebSocket endpoints)
+├── audio_capture.py                 # Mic + desktop audio capture (sounddevice/WASAPI)
+├── realtime_asr.py                  # Chunked Parakeet ASR worker for real-time
+├── transcript_store.py              # Thread-safe transcript accumulator
+├── models.py                        # Shared data types (timestamps, LiveWord)
+├── main.py                          # Batch CLI entry point (multi-track pipeline)
 ├── main_single_track.py             # Single-track pipeline with speaker diarization
 ├── multitalker_transcript_config.py # Configuration for diarization and streaming ASR
 ├── test_transcript.py               # Utility to replay transcripts with timing
