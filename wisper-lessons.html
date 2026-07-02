@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wisper — a guided tour of your own codebase</title>
+<style>
+  :root{
+    --bg:#fffff8; --ink:#151414; --muted:#6b6560; --rule:#e0dccf;
+    --accent:#8a1c1c; --link:#1a5276; --codebg:#f4f1e6; --ok:#2e6b2e; --bad:#8a1c1c;
+    --okbg:#e7f0e4; --badbg:#f5e6e4; --card:#fcfbf2;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:Georgia,"Iowan Old Style","Palatino Linotype",serif;
+    font-size:18px; line-height:1.55; margin:0; padding:0;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1180px; margin:0 auto; padding:0 24px;}
+  header.top{padding:64px 0 28px; border-bottom:1px solid var(--rule); max-width:760px;}
+  h1{font-size:2.5rem; line-height:1.05; margin:0 0 .3em; font-weight:400; letter-spacing:-.01em;}
+  h1 .mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace; font-size:2.2rem;}
+  .subtitle{font-style:italic; color:var(--muted); font-size:1.2rem; margin:0 0 1.4em;}
+  .mission{background:var(--card); border:1px solid var(--rule); border-left:4px solid var(--accent);
+    padding:16px 20px; border-radius:3px; font-size:1rem;}
+  .mission b{color:var(--accent)}
+  a{color:var(--link); text-decoration:none; border-bottom:1px solid #cdd8de;}
+  a:hover{border-bottom-color:var(--link)}
+  .layout{display:grid; grid-template-columns:230px minmax(0,1fr); gap:48px; align-items:start; margin-top:36px;}
+  nav.toc{position:sticky; top:20px; font-size:.86rem; line-height:1.4; border-right:1px solid var(--rule);
+    padding-right:18px; max-height:calc(100vh - 40px); overflow:auto;}
+  nav.toc h4{font-variant:small-caps; letter-spacing:.06em; color:var(--muted); margin:0 0 .5em; font-weight:400; font-size:.8rem;}
+  nav.toc a{display:block; padding:3px 0; border:0; color:var(--ink);}
+  nav.toc a:hover{color:var(--accent)}
+  nav.toc a .n{color:var(--muted); font-family:ui-monospace,monospace; font-size:.75rem; margin-right:6px;}
+  main{max-width:760px; padding-bottom:120px;}
+  section.lesson{padding:40px 0 8px; border-top:1px solid var(--rule);}
+  section.lesson:first-of-type{border-top:0;}
+  .kicker{font-variant:small-caps; letter-spacing:.09em; color:var(--accent); font-size:.82rem; margin:0 0 .2em;}
+  h2{font-size:1.7rem; font-weight:400; margin:.1em 0 .5em; line-height:1.15;}
+  h3{font-size:1.15rem; font-weight:400; margin:1.6em 0 .3em; color:#333;}
+  p{margin:.7em 0;}
+  .win{font-size:.92rem; color:var(--muted); font-style:italic; margin:0 0 1.1em;}
+  code{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace; font-size:.86em; background:var(--codebg);
+    padding:.08em .35em; border-radius:3px;}
+  pre{background:var(--codebg); border:1px solid var(--rule); border-radius:5px; padding:14px 16px; overflow:auto;
+    font-size:.8rem; line-height:1.5; margin:1em 0 .3em;}
+  pre code{background:none; padding:0; font-size:inherit;}
+  .caption{font-size:.76rem; color:var(--muted); margin:0 0 1.2em; font-style:italic;}
+  .caption a{color:var(--muted);}
+  aside.margin{float:right; clear:right; width:210px; margin-right:-258px; margin-top:.3em; margin-bottom:1em;
+    font-size:.78rem; line-height:1.4; color:var(--muted); border-left:2px solid var(--rule); padding-left:12px;}
+  aside.margin b{color:#4a4540;}
+  .kw{color:var(--accent); font-style:normal;}
+  .num{color:var(--muted); font-family:ui-monospace,monospace;}
+  ul,ol{margin:.6em 0; padding-left:1.4em;}
+  li{margin:.3em 0;}
+  .quiz{background:var(--card); border:1px solid var(--rule); border-radius:6px; padding:18px 20px; margin:1.6em 0;}
+  .quiz .q{font-weight:400; margin:0 0 .8em;}
+  .quiz .q .tag{font-variant:small-caps; letter-spacing:.06em; color:var(--accent); font-size:.72rem; display:block; margin-bottom:.3em;}
+  .quiz .opt{display:block; width:100%; text-align:left; background:#fff; border:1px solid var(--rule);
+    border-radius:4px; padding:9px 12px; margin:6px 0; font:inherit; font-size:.9rem; cursor:pointer; color:var(--ink);
+    transition:background .12s,border-color .12s;}
+  .quiz .opt:hover:not(:disabled){border-color:var(--link); background:#fbfbff;}
+  .quiz .opt:disabled{cursor:default; opacity:.92;}
+  .quiz .opt.right{background:var(--okbg); border-color:var(--ok); color:var(--ok);}
+  .quiz .opt.wrong{background:var(--badbg); border-color:var(--bad); color:var(--bad);}
+  .quiz .explain{display:none; margin-top:12px; padding-top:12px; border-top:1px dashed var(--rule);
+    font-size:.86rem; color:#3a3530;}
+  .quiz .explain b{color:var(--ok);}
+  .src{font-size:.85rem; background:#f7f5ea; border:1px solid var(--rule); border-radius:5px; padding:12px 16px; margin:1.4em 0;}
+  .src .lbl{font-variant:small-caps; letter-spacing:.07em; color:var(--muted); font-size:.72rem; display:block; margin-bottom:.2em;}
+  table.map{width:100%; border-collapse:collapse; font-size:.82rem; margin:1em 0;}
+  table.map th,table.map td{text-align:left; padding:7px 10px; border-bottom:1px solid var(--rule); vertical-align:top;}
+  table.map th{font-variant:small-caps; letter-spacing:.05em; color:var(--muted); font-weight:400;}
+  table.map td code{font-size:.82em;}
+  .glossary dt{font-weight:700; margin-top:.9em; font-size:.95rem;}
+  .glossary dd{margin:.1em 0 0; color:#3a3530; font-size:.9rem;}
+  .note{background:#fdf6e3; border:1px solid #e8dcae; border-radius:5px; padding:12px 16px; font-size:.86rem; margin:1.3em 0;}
+  .note b{color:#8a6d1c;}
+  .flag{color:var(--accent); font-weight:700; font-size:.72rem; font-variant:small-caps; letter-spacing:.06em;}
+  footer{border-top:1px solid var(--rule); margin-top:40px; padding:30px 0 80px; color:var(--muted); font-size:.9rem; max-width:760px;}
+  .ask{background:var(--card); border:1px dashed var(--accent); border-radius:6px; padding:16px 20px; margin:1.6em 0; font-size:.95rem;}
+  .ask b{color:var(--accent);}
+  hr.soft{border:0; border-top:1px solid var(--rule); margin:2em 0;}
+  @media (max-width:1080px){
+    aside.margin{float:none; width:auto; margin:1em 0; border-left:2px solid var(--rule);}
+    .layout{grid-template-columns:1fr; gap:0;}
+    nav.toc{position:static; border-right:0; border-bottom:1px solid var(--rule); padding:0 0 18px; margin-bottom:18px; max-height:none;}
+    nav.toc a{display:inline-block; margin-right:14px;}
+  }
+  @media print{
+    nav.toc,.quiz,.ask{display:none;}
+    body{font-size:11pt;} aside.margin{color:#555;}
+    a{color:#000;border:0;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="top">
+  <p class="kicker">A guided tour · read-and-review edition</p>
+  <h1><span class="mono">wisper</span>: understanding your own codebase</h1>
+  <p class="subtitle">Three transcription modes, one ASR model, and the plumbing that connects them — explained from the source you shipped.</p>
+  <div class="mission">
+    <b>Your mission.</b> Genuinely grasp how <span class="mono">wisper</span> works end-to-end — enough to reason about it, extend it, and defend the design choices. Every lesson here is grounded in the <em>actual code</em> in this repo (with <code>file:line</code> references), not generic theory. Read top to bottom, or jump to the part you care about.
+  </div>
+</header>
+
+<div class="layout">
+<nav class="toc">
+  <h4>Lessons</h4>
+  <a href="#map"><span class="n">00</span>The map</a>
+  <a href="#run"><span class="n">▶</span>Running it (playbook)</a>
+  <a href="#vocab"><span class="n">01</span>The shared vocabulary</a>
+  <a href="#batch"><span class="n">02</span>Batch pipeline &amp; chunking</a>
+  <a href="#realtime"><span class="n">03</span>Real-time: queues &amp; backpressure</a>
+  <a href="#overlap"><span class="n">04</span>Overlap &amp; dedup, two ways</a>
+  <a href="#wiring"><span class="n">05</span>Wiring it together</a>
+  <a href="#capture"><span class="n">06</span>Capturing the physical world</a>
+  <a href="#diar"><span class="n">07</span>Diarization mode</a>
+  <a href="#glossary">Glossary</a>
+  <a href="#final">Final recall</a>
+  <a href="#sources">Primary sources</a>
+</nav>
+
+<main>
+
+<!-- ===================== LESSON 0 ===================== -->
+<section class="lesson" id="map">
+  <p class="kicker">Lesson 00</p>
+  <h2>The map: one model, three orchestrations</h2>
+  <p class="win"><b>Win:</b> after this you can name every file and say <em>why</em> it exists in one sentence.</p>
+
+  <p>Here is the single most important idea in the whole repository. Every one of the three modes ultimately runs the <em>same</em> line of code:</p>
+
+<pre><code>asr_model = asr.models.ASRModel.from_pretrained("nvidia/parakeet-tdt-0.6b-v3")
+outputs   = asr_model.transcribe([path], timestamps=True)</code></pre>
+  <p class="caption">This exact call appears in <code>main.py:342/351</code>, <code>realtime_asr.py:100/228</code>, and <code>main_single_track.py:129/135</code>.</p>
+
+  <aside class="margin"><b>Why this matters.</b> If the model call is identical everywhere, then <em>all the interesting engineering in this repo is not about ASR at all.</em> It is about (a) getting audio <em>to</em> that call and (b) assembling what comes <em>back</em>. Keep that lens on as you read.</aside>
+
+  <p>The model is a black box that turns a chunk of audio into timestamped words. Everything else <span class="mono">wisper</span> contains exists to feed that box or to organize its output. That reframes ten files into two jobs.</p>
+
+  <table class="map">
+    <tr><th>File</th><th>Job — in one sentence</th></tr>
+    <tr><td><code>models.py</code></td><td>The shared vocabulary — the dataclasses every mode speaks in. <a href="#vocab">L01</a></td></tr>
+    <tr><td><code>main.py</code></td><td>Batch CLI: video → audio → (chunk) → transcribe → merge → JSON/txt. <a href="#batch">L02</a></td></tr>
+    <tr><td><code>audio_capture.py</code></td><td>Turns mic / desktop / network into identical float32 16 kHz chunks. <a href="#capture">L06</a></td></tr>
+    <tr><td><code>realtime_asr.py</code></td><td>The live worker: buffer audio, transcribe, dedup, emit words. <a href="#realtime">L03</a></td></tr>
+    <tr><td><code>transcript_store.py</code></td><td>Thread-safe mailbox between the worker and the web server. <a href="#wiring">L05</a></td></tr>
+    <tr><td><code>server.py</code></td><td>FastAPI REST + WebSocket surface that reads from the store. <a href="#wiring">L05</a></td></tr>
+    <tr><td><code>serve.py</code></td><td>Wires capture + workers + server together and runs uvicorn. <a href="#wiring">L05</a></td></tr>
+    <tr><td><code>main_single_track.py</code></td><td>Diarization pipeline (who spoke when) via Sortformer. <a href="#diar">L07</a></td></tr>
+    <tr><td><code>multitalker_transcript_config.py</code></td><td>Dataclass of ~50 knobs for the streaming diarization setup. <a href="#diar">L07</a></td></tr>
+    <tr><td><code>test_transcript.py</code></td><td>Replays a saved transcript word-by-word with timing (dev tool).</td></tr>
+  </table>
+
+  <div class="quiz" data-quiz>
+    <p class="q"><span class="tag">Recall</span>Across all three modes, what actually differs between them?</p>
+    <button class="opt" onclick="ans(this,0)">The ASR model that gets loaded</button>
+    <button class="opt" onclick="ans(this,1)">How audio reaches the model and how results are assembled</button>
+    <button class="opt" onclick="ans(this,0)">The programming language each mode uses</button>
+    <button class="opt" onclick="ans(this,0)">The timestamp format the model returns</button>
+    <div class="explain"><b>Right: the plumbing, not the model.</b> All three call the identical Parakeet TDT model with <code>timestamps=True</code>. What varies is the <em>input path</em> (whole file, live buffer, streaming buffer) and the <em>output assembly</em> (merge, dedup, speaker-tag). Hold this idea — it makes every other lesson shorter.</div>
+  </div>
+</section>
+
+<!-- ===================== PLAYBOOK ===================== -->
+<section class="lesson" id="run">
+  <p class="kicker">Playbook · how to actually run it</p>
+  <h2>Running <span class="mono">wisper</span></h2>
+  <p class="win"><b>Win:</b> you can go from a fresh checkout to a transcript — and to a live feed — with copy-paste commands.</p>
+
+  <h3>Setup (once)</h3>
+<pre><code>uv sync --extra cu128</code></pre>
+  <p class="caption">Installs all dependencies plus CUDA 12.8 PyTorch from the custom index (<code>pyproject.toml:19–35</code>). Every command below uses <code>uv run</code>, which runs inside that environment.</p>
+  <p><b>Prerequisites</b> the code assumes: Python <b>3.12</b>, an <b>NVIDIA CUDA 12.8 GPU</b>, and <b>ffmpeg + ffprobe on your PATH</b> — the batch and network paths shell out to them directly (<code>main.py:156</code>, <code>audio_capture.py:203</code>).</p>
+  <div class="note"><span class="flag">Windows gotcha (the real one)</span> Use <b>Python 3.12</b>, not 3.13. On 3.13 there's no prebuilt <code>editdistance</code> wheel (a NeMo dependency), so <code>uv</code> compiles it from source with Cython — and Windows 11 <b>Smart App Control</b> blocks the unsigned build DLL with <code>ImportError: DLL load failed … An Application Control policy has blocked this file</code>. On 3.12 the wheel is prebuilt, so nothing compiles and nothing gets blocked. If a stale environment picks the wrong version: <code>uv python pin 3.12</code>, delete the <code>.venv</code> folder, then re-run <code>uv sync --extra cu128</code>.</div>
+  <aside class="margin"><b>First run is slow.</b> The Parakeet model (~0.6B params) downloads from HuggingFace the first time it's loaded, then caches. A first transcription can take minutes before any output appears; later runs skip the download.</aside>
+
+  <h3>Mode A — Batch transcription <span style="color:var(--muted);font-size:.8rem;">(<code>main.py</code>)</span></h3>
+  <p>The everyday path: drop media in <code>video/</code>, run, collect JSON from <code>transcript/</code>.</p>
+<pre><code>uv run main.py                                 # all videos in video/
+uv run main.py -i video/interview.mp4          # one specific file
+uv run main.py --audio-only -i audio/pod.mp3   # skip video extraction
+uv run main.py --format txt                    # plain text (segments + timestamps)
+uv run main.py --format plain                  # plain text, NO timestamps (segment text only)
+uv run main.py --youtube "https://youtu.be/XXXX"   # download from YouTube, then transcribe
+uv run main.py --tracks 1 2                     # only these audio tracks (1-indexed)
+uv run main.py --skip-existing --dry-run        # preview what would run, do nothing
+uv run main.py --chunk-minutes 0                # disable chunking (short files / big GPU)
+uv run main.py -v                               # verbose: print segments as they're recognized</code></pre>
+  <p class="caption">Full flag set defined in <code>build_parser</code>, <code>main.py:37–95</code>.</p>
+
+  <table class="map">
+    <tr><th>Flag</th><th>What it does</th><th>Default</th></tr>
+    <tr><td><code>--input / -i</code></td><td>A single file or a directory to process</td><td>scan <code>video/</code></td></tr>
+    <tr><td><code>--audio-only</code></td><td>Treat inputs as audio; skip ffmpeg extraction</td><td>off</td></tr>
+    <tr><td><code>--tracks N&nbsp;[N…]</code></td><td>Only these audio tracks from the video</td><td>all tracks</td></tr>
+    <tr><td><code>--format</code></td><td><code>json</code> (all timestamps), <code>txt</code> (segments + timestamps), or <code>plain</code> (segment text only, no timestamps)</td><td><code>json</code></td></tr>
+    <tr><td><code>--chunk-minutes</code></td><td>Chunk size to avoid CUDA OOM; <code>0</code> disables</td><td><code>5.0</code></td></tr>
+    <tr><td><code>--skip-existing</code></td><td>Skip inputs that already have a transcript</td><td>off</td></tr>
+    <tr><td><code>--dry-run</code></td><td>List what would run, then exit</td><td>off</td></tr>
+    <tr><td><code>--youtube URL</code></td><td>Download a video first, then transcribe it</td><td>—</td></tr>
+    <tr><td><code>-v</code> / <code>-q</code></td><td>Verbose / quiet output</td><td>normal</td></tr>
+    <tr><td><code>--video-dir / --audio-dir / --output-dir</code></td><td>Override the working folders</td><td><code>video/ audio/ transcript/</code></td></tr>
+  </table>
+  <p><b>Where output lands:</b> <code>transcript/&lt;name&gt;.json</code> — a list of tracks, each <code>{ word:[…], segment:[…], char:[…] }</code> (see <a href="#vocab">Lesson 01</a>). With <code>--format txt</code> you get <code>start&nbsp;–&nbsp;end&nbsp;:&nbsp;text</code> lines instead, and <code>--format plain</code> gives just the text, one segment per line (no timestamps).</p>
+
+  <h3>Mode B — Real-time service <span style="color:var(--muted);font-size:.8rem;">(<code>serve.py</code>)</span></h3>
+  <p>Starts audio capture + ASR workers + a web server that stays running. <b>Terminal 1</b> — launch it:</p>
+<pre><code>uv run serve.py                                    # microphone, port 8000
+uv run serve.py --source desktop                   # desktop audio (WASAPI loopback, Windows)
+uv run serve.py --source both --mix mixed          # mic + desktop combined into one stream
+uv run serve.py --source both                      # mic + desktop as two separate feeds
+uv run serve.py --stream-url rtp://0.0.0.0:5004    # network stream (auto-sets --source=network)
+uv run serve.py --port 9000 --chunk-seconds 5      # custom port, 5s inference window</code></pre>
+  <p class="caption">Options in <code>build_parser</code>, <code>serve.py:34–86</code>. Leave this running; query it from elsewhere.</p>
+
+  <p><b>Terminal 2 (or your browser)</b> — read the live transcript. GET endpoints work by pasting the URL straight into a browser:</p>
+<pre><code>http://127.0.0.1:8000/api/status          # is it running? which sources? word counts
+http://127.0.0.1:8000/api/last-word       # most recent word
+http://127.0.0.1:8000/api/last-words?n=50 # last 50 words (rolling — re-readable)
+http://127.0.0.1:8000/api/last-segment    # most recent full sentence/segment
+http://127.0.0.1:8000/api/pop-words?n=10  # next 10 words, CONSUMED on read</code></pre>
+  <aside class="margin"><b>peek vs. consume.</b> <code>last-*</code> peeks the rolling window (read it as often as you like — good for a dashboard). <code>pop-*</code> drains a mailbox (each word returned once — good for a downstream process). Same idea as <a href="#wiring">Lesson 05</a>.</aside>
+  <aside class="margin"><b>Separate mode.</b> With <code>--source both</code> (not mixed) there are two feeds; add <code>?source=mic</code> or <code>?source=desktop</code> to any endpoint, e.g. <code>/api/last-word?source=desktop</code>.</aside>
+
+  <p>For a continuous push feed instead of polling, open the <b>WebSocket</b>. Paste this in a browser console:</p>
+<pre><code>const ws = new WebSocket("ws://127.0.0.1:8000/ws/stream");
+ws.onmessage = e =&gt; console.log(JSON.parse(e.data));   // {timestamp, word, source}</code></pre>
+  <div class="note"><b>Two gotchas.</b> (1) The server binds <code>127.0.0.1</code> (localhost only) by default — pass <code>--host 0.0.0.0</code> to reach it from another machine on your network. (2) On Windows PowerShell, <code>curl</code> is an alias for a different tool; use <code>curl.exe</code>, <code>Invoke-RestMethod</code>, or just the browser for the GET endpoints above.</div>
+
+  <h3>Mode C — Diarization / single-track <span style="color:var(--muted);font-size:.8rem;">(<code>main_single_track.py</code>)</span></h3>
+<pre><code>uv run main_single_track.py                        # iterates video/, writes transcript/</code></pre>
+  <div class="note"><span class="flag">Read before you run</span> As shipped, this file's <code>main()</code> calls <code>transcribe_audio_parakeet</code> — <em>plain</em> transcription with moviepy-based extraction (<code>main_single_track.py:173–177</code>). The diarization (<code>transcribe_audio_diarization</code>) and multitalker (<code>transcribe_audio_multitalker_parakeet</code>) functions <em>exist</em> in the file but are not wired into <code>main()</code>. To actually get speaker labels you edit <code>video_to_transcript</code> to call the multitalker function instead. Treat this file as experimental — see <a href="#diar">Lesson 07</a>.</div>
+
+  <h3>Utility — replay a transcript <span style="color:var(--muted);font-size:.8rem;">(<code>test_transcript.py</code>)</span></h3>
+  <p>Plays a saved JSON transcript back word-by-word at its real timing (via <code>time.sleep</code>) — a quick eyeball check that timestamps look sane. Edit the hardcoded path first:</p>
+<pre><code># test_transcript.py:34  →  set input_path to your file
+uv run test_transcript.py</code></pre>
+
+  <div class="quiz" data-quiz>
+    <p class="q"><span class="tag">Apply</span>You want a plain-text transcript of one long podcast MP3, and your GPU is modest. Which command?</p>
+    <button class="opt" onclick="ans(this,1)"><code>uv run main.py --audio-only -i audio/pod.mp3 --format txt</code></button>
+    <button class="opt" onclick="ans(this,0)"><code>uv run main.py -i audio/pod.mp3 --chunk-minutes 0</code></button>
+    <button class="opt" onclick="ans(this,0)"><code>uv run serve.py --source network --format txt</code></button>
+    <button class="opt" onclick="ans(this,0)"><code>uv run main_single_track.py --audio-only --txt</code></button>
+    <div class="explain"><b>Right.</b> <code>--audio-only</code> skips video extraction for an MP3, <code>--format txt</code> gives plain text, and leaving <code>--chunk-minutes</code> at its 5-minute default keeps a modest GPU from running out of memory on a long file. Option 2 <em>disables</em> the very chunking that protects a small GPU; <code>serve.py</code> is the live service (no <code>--format</code>); and <code>main_single_track.py</code> has no such flags.</div>
+  </div>
+</section>
+
+<!-- ===================== LESSON 1 ===================== -->
+<section class="lesson" id="vocab">
+  <p class="kicker">Lesson 01</p>
+  <h2>The shared vocabulary</h2>
+  <p class="win"><b>Win:</b> you can explain why <code>models.py</code> is the quiet keystone of the whole project.</p>
+
+  <p>NeMo hands back untyped dictionaries: <code>output.timestamp["word"]</code> is a list of <code>{"start", "end", "word"}</code> dicts. Loose dicts are fine for one script, but this repo has <em>three</em> pipelines that all need to agree on shape. So the first thing every pipeline does is translate NeMo's dicts into typed dataclasses.</p>
+
+<pre><code>@dataclass(frozen=True, slots=True)
+class WordTimestamp:
+    start: float
+    end: float
+    word: str</code></pre>
+  <p class="caption"><code>models.py:6–10</code>. Also <code>SegmentTimestamp</code>, <code>CharTimestamp</code>, the container <code>TrackTranscript</code>, and the real-time <code>LiveWord</code>.</p>
+
+  <aside class="margin"><b>Two words to learn.</b> <code>frozen=True</code> makes instances immutable (can't accidentally rewrite a timestamp after the fact). <code>slots=True</code> drops the per-instance <code>__dict__</code>, saving memory — it matters when a long file produces tens of thousands of word objects. See <a href="#sources">dataclasses docs</a>.</aside>
+
+  <p>This is the <span class="kw">seam</span> of the codebase: the one type that batch and real-time both route through. The conversion happens in <code>main.py:270–277</code> (<code>_output_to_transcript</code>) for batch, and produces <code>LiveWord</code> objects in <code>realtime_asr.py:244</code> for live mode.</p>
+
+  <p>Notice the two container shapes serve different lifecycles:</p>
+  <ul>
+    <li><code>TrackTranscript</code> — <em>a whole finished transcript</em> (three parallel lists: word, segment, char). Batch mode's unit. It even carries its own <code>to_dict()</code> for JSON serialization (<code>models.py:33</code>).</li>
+    <li><code>LiveWord</code> — <em>a single word, the instant it's recognized</em>, tagged with <code>timestamp</code> and a <code>source</code> label (<code>"mic"</code>/<code>"desktop"</code>/<code>"mixed"</code>). Real-time mode's unit, because live mode ships one word at a time.</li>
+  </ul>
+
+  <div class="quiz" data-quiz>
+    <p class="q"><span class="tag">Understand</span>Why does <code>WordTimestamp</code> use <code>frozen=True, slots=True</code>?</p>
+    <button class="opt" onclick="ans(this,0)">It is required for JSON serialization to work</button>
+    <button class="opt" onclick="ans(this,1)">Immutability prevents edits; slots cut per-object memory</button>
+    <button class="opt" onclick="ans(this,0)">It makes the dataclass run inference much faster</button>
+    <button class="opt" onclick="ans(this,0)">It allows the class to inherit from NeMo base types</button>
+    <div class="explain"><b>Right.</b> <code>frozen</code> = safety (a recognized word shouldn't mutate); <code>slots</code> = memory (thousands of tiny objects per long transcript). Neither is about speed of inference or serialization.</div>
+  </div>
+</section>
+
+<!-- ===================== LESSON 2 ===================== -->
+<section class="lesson" id="batch">
+  <p class="kicker">Lesson 02</p>
+  <h2>The batch pipeline &amp; the chunking trick</h2>
+  <p class="win"><b>Win:</b> you can explain how a 2-hour file gets transcribed without blowing up the GPU.</p>
+
+  <p>The batch pipeline (<code>main.py</code>) is a clean four-step assembly line, visible in <code>video_to_transcript</code> (<code>main.py:406</code>):</p>
+  <ol>
+    <li><b>Detect &amp; extract tracks</b> — <code>ffprobe</code> counts audio streams, then <code>ffmpeg</code> exports each as a mono MP3 (<code>convert_video_to_audio_tracks</code>, <code>main.py:285</code>). A video can carry several audio tracks; each becomes its own transcript.</li>
+    <li><b>Transcribe</b> — load Parakeet, run it (<code>transcribe_audio_parakeet</code>, <code>main.py:331</code>).</li>
+    <li><b>Convert</b> — NeMo dicts → <code>TrackTranscript</code>.</li>
+    <li><b>Save</b> — JSON (<code>save_transcript_to_file</code>) or timestamped text (<code>save_transcript_as_text</code>).</li>
+  </ol>
+
+  <h3>The real problem: GPU memory</h3>
+  <p>ASR models hold the whole audio's activations in VRAM. Feed a 90-minute file in one pass and CUDA runs out of memory. The fix is <span class="kw">chunking</span>: cut the audio into N-minute pieces, transcribe each, stitch the results back. But a naïve cut slices words in half at the boundaries. So the chunks <em>overlap</em>.</p>
+
+<pre><code>stride = chunk_seconds - overlap_seconds     # main.py:188
+# ... windows: [0, chunk], [stride, stride+chunk], ...
+ffmpeg -ss {start} -t {chunk_dur} -i in.mp3 -c copy chunk.mp3</code></pre>
+  <p class="caption"><code>split_audio_into_chunks</code>, <code>main.py:172–214</code>. Overlap is a fixed 15&nbsp;s (<code>CHUNK_OVERLAP_SECONDS</code>).</p>
+
+  <aside class="margin"><b><code>-c copy</code>.</b> ffmpeg <em>copies</em> the compressed MP3 stream instead of re-encoding it — near-instant, no quality loss. The tradeoff: cuts land on codec frame boundaries, not exact samples. For chunking that's harmless; for sample-accurate editing it wouldn't be.</aside>
+
+  <h3>Stitching without duplicates</h3>
+  <p>Overlap means the last 15&nbsp;s of chunk <em>i</em> and the first 15&nbsp;s of chunk <em>i+1</em> both get transcribed. If you naïvely concatenated, you'd repeat those words. The merge (<code>merge_chunk_transcripts</code>, <code>main.py:217</code>) draws a <span class="kw">cut line at the midpoint of each overlap window</span> and keeps each word from exactly one side:</p>
+
+<pre><code>cuts[i] = next_offset + overlap_seconds / 2      # main.py:234
+# a word survives if:  lower <= (word.start + offset) < upper</code></pre>
+
+  <aside class="margin"><b>Why the midpoint?</b> A word near a chunk's <em>edge</em> was transcribed with little surrounding context, so it's more error-prone. The midpoint heuristic keeps each word from the chunk in whose <em>interior</em> it fell — where the model saw the most context around it.</aside>
+
+  <p>Every timestamp is also shifted by that chunk's <code>offset</code> so the merged transcript reads as one continuous timeline. The output is structurally identical to a non-chunked run — that's the whole point. Set <code>--chunk-minutes 0</code> to disable it (<code>main.py:439</code>).</p>
+
+  <div class="quiz" data-quiz>
+    <p class="q"><span class="tag">Understand</span>Why do the audio chunks overlap by 15 seconds?</p>
+    <button class="opt" onclick="ans(this,0)">To make each chunk large enough for the GPU</button>
+    <button class="opt" onclick="ans(this,1)">So words spanning a boundary aren't cut in half</button>
+    <button class="opt" onclick="ans(this,0)">To let two chunks be transcribed in parallel</button>
+    <button class="opt" onclick="ans(this,0)">To reduce the total number of chunks produced</button>
+    <div class="explain"><b>Right.</b> A hard cut could split a word across chunks and mangle both halves. Overlap guarantees every word appears whole in <em>some</em> chunk; the midpoint cut line then decides which copy to keep so it isn't duplicated.</div>
+  </div>
+</section>
+
+<!-- ===================== LESSON 3 ===================== -->
+<section class="lesson" id="realtime">
+  <p class="kicker">Lesson 03</p>
+  <h2>Real-time: producer, consumer, and backpressure</h2>
+  <p class="win"><b>Win:</b> you can trace a single spoken word from microphone to recognized text.</p>
+
+  <p>Live transcription is a classic <span class="kw">producer/consumer</span> problem. Audio arrives continuously and can't be paused; inference is slower and bursty. The buffer between them is a <code>queue.Queue</code>.</p>
+
+<pre><code>self.mic_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=60)</code></pre>
+  <p class="caption"><code>audio_capture.py:115</code>. At the default 0.5&nbsp;s chunk, 60 slots ≈ 30&nbsp;s of buffered audio.</p>
+
+  <p><b>Producer</b> (capture) pushes ~0.5&nbsp;s audio chunks. <b>Consumer</b> (the ASR worker) drains them. When they fall out of sync, the bounded queue is the pressure valve — and this repo makes a deliberate choice about what to do when it fills:</p>
+
+<pre><code>try:
+    target_queue.put_nowait(audio)
+except queue.Full:
+    target_queue.get_nowait()      # drop the OLDEST chunk
+    target_queue.put_nowait(audio) # keep the newest</code></pre>
+  <p class="caption"><code>audio_capture.py:156–167</code> (same pattern for the network reader at :248).</p>
+
+  <aside class="margin"><b>Freshness &gt; completeness.</b> A live transcriber that falls behind should skip stale audio and stay current, not queue up a growing backlog it will narrate minutes late. Dropping the oldest chunk is the correct choice <em>for this use case</em> — and the opposite of what a batch job (which must transcribe everything) would want.</aside>
+
+  <h3>The consumer's loop</h3>
+  <p>The worker (<code>ChunkedParakeetWorker._run</code>, <code>realtime_asr.py:163</code>) does a small state machine on its own thread:</p>
+  <ol>
+    <li><b>Drain</b> everything currently in the queue into a running <code>buffer</code> (:176).</li>
+    <li><b>Wait</b> until the buffer holds at least <code>chunk_seconds</code> (default 3&nbsp;s) of audio (:186).</li>
+    <li><b>Transcribe</b> the first 3&nbsp;s; then keep the last 1&nbsp;s as overlap for the next round: <code>buffer = buffer[chunk_samples - overlap_samples:]</code> (:190–192).</li>
+    <li><b>Dedup &amp; emit</b> — push only genuinely new words into the <code>TranscriptStore</code> (:197). <em>How dedup works is <a href="#overlap">Lesson 04</a>.</em></li>
+  </ol>
+
+  <aside class="margin"><b>Two chunk sizes, don't confuse them.</b> Capture chunk = 0.5&nbsp;s (how often audio is delivered). Worker chunk = 3&nbsp;s (how much audio each inference sees). The worker accumulates ~6 capture chunks before it runs the model once.</aside>
+
+  <p>There's also a graceful-shutdown tail: on stop, any leftover buffer ≥ 0.5&nbsp;s gets one final transcription (<code>realtime_asr.py:202</code>) so the last words aren't lost.</p>
+
+  <div class="quiz" data-quiz>
+    <p class="q"><span class="tag">Design</span>When the audio queue is full, the code drops the <em>oldest</em> chunk. Why is that right here?</p>
+    <button class="opt" onclick="ans(this,0)">Older audio is always lower quality than new</button>
+    <button class="opt" onclick="ans(this,1)">For live output, staying current beats transcribing every second</button>
+    <button class="opt" onclick="ans(this,0)">Dropping the newest chunk would crash the worker</button>
+    <button class="opt" onclick="ans(this,0)">It guarantees the transcript has no duplicate words</button>
+    <div class="explain"><b>Right.</b> This is a latency-vs-completeness tradeoff. A real-time transcriber that buffers a backlog drifts further behind reality every second. Better to skip stale audio and report what's happening <em>now</em>. A batch pipeline would make the opposite choice.</div>
+  </div>
+</section>
+
+<!-- ===================== LESSON 4 ===================== -->
+<section class="lesson" id="overlap">
+  <p class="kicker">Lesson 04 · the keystone lesson</p>
+  <h2>One problem, two solutions: overlap &amp; dedup</h2>
+  <p class="win"><b>Win:</b> you can contrast how batch and real-time solve the <em>same</em> duplication problem — and say why each fits its context.</p>
+
+  <p>Both pipelines overlap their chunks (Lessons 02 &amp; 03) for the same reason: don't slice words at boundaries. Both therefore transcribe the overlap region twice and must remove the duplicates. But they have different information available, so they solve it differently. This contrast is the heart of the repo.</p>
+
+  <h3>Batch: cut by <em>time</em></h3>
+  <p>Batch knows every word's absolute timestamp, so it can reason spatially: draw a line at the overlap midpoint and keep whichever words fall on the correct side (<a href="#batch">Lesson 02</a>). Clean, deterministic, timestamp-driven.</p>
+
+  <h3>Real-time: cut by <em>text</em></h3>
+  <p>The live worker can't compare against "the next chunk" — that audio doesn't exist yet. All it has is a memory of the words it <em>already emitted</em>. So it dedups by matching word <em>sequences</em>: find the longest run where the tail of what-was-said equals the head of what-was-just-heard, and skip it.</p>
+
+<pre><code>@staticmethod
+def _find_overlap(emitted, new):
+    max_check = min(len(emitted), len(new), 20)
+    for length in range(max_check, 0, -1):     # longest match first
+        if emitted[-length:] == new[:length]:
+            return length
+    return 0</code></pre>
+  <p class="caption"><code>realtime_asr.py:268–285</code>. The returned count is skipped in <code>_transcribe_chunk</code> (:243).</p>
+
+  <aside class="margin"><b>Greedy longest-first.</b> It tries the longest possible overlap (up to 20 words) and returns the first match, so a short accidental coincidence ("the… the") can't beat a genuine long overlap. <code>emitted_words</code> is also trimmed to ~100 entries (:253) so the match window can't grow without bound.</aside>
+
+  <p>One more subtlety worth spotting: segments get a cruder skip, <code>raw_segments[skip and 1 or 0:]</code> (<code>realtime_asr.py:257</code>) — a terse pre-<code>ternary</code> Python idiom meaning "if we skipped any words, drop the first segment too (it's probably the overlap), else keep all." Words get precise dedup; segments get a heuristic.</p>
+
+  <div class="note">
+    <b>The insight to keep.</b> "Overlap to avoid cutting, then dedup the overlap" is one pattern with two implementations. Batch has global timestamps → cut by position. Streaming has only history → cut by matching text. <em>Same problem, different information available, different solution.</em> Recognizing this shape will help you far beyond this repo.
+  </div>
+
+  <div class="quiz" data-quiz>
+    <p class="q"><span class="tag">Contrast</span>Why can't real-time mode use the batch merge (midpoint-of-overlap cut)?</p>
+    <button class="opt" onclick="ans(this,0)">The real-time timestamps are not accurate enough</button>
+    <button class="opt" onclick="ans(this,1)">The next chunk's audio doesn't exist yet to compare against</button>
+    <button class="opt" onclick="ans(this,0)">The batch merge is too slow to run in real time</button>
+    <button class="opt" onclick="ans(this,0)">Real-time mode never overlaps its chunks at all</button>
+    <div class="explain"><b>Right.</b> The batch cut compares two adjacent, already-transcribed chunks. Live audio arrives incrementally — there is no "next chunk" to draw a midpoint against. So the worker dedups against the only thing it has: the words it already emitted, matched as text.</div>
+  </div>
+</section>
+
+<!-- ===================== LESSON 5 ===================== -->
+<section class="lesson" id="wiring">
+  <p class="kicker">Lesson 05</p>
+  <h2>Wiring it together: three concurrency domains, two seams</h2>
+  <p class="win"><b>Win:</b> you can draw who runs on which thread and where they hand off data.</p>
+
+  <p>The real-time service has three things running at once, in different concurrency models:</p>
+  <ul>
+    <li><b>Capture callbacks</b> — run on PortAudio's own thread(s) (or an ffmpeg-reader thread for network). Producers.</li>
+    <li><b>ASR worker(s)</b> — a plain <code>threading.Thread</code> per source (<code>realtime_asr.py:81</code>). Consumers.</li>
+    <li><b>uvicorn / FastAPI</b> — an <code>async</code> event loop serving HTTP + WebSocket.</li>
+  </ul>
+  <p>These never call each other directly. They meet at exactly two objects: the <code>queue.Queue</code> (capture → worker) and the <code>TranscriptStore</code> (worker → web).</p>
+
+  <h3>The store is three data structures in a trench coat</h3>
+  <p><code>TranscriptStore</code> (<code>transcript_store.py</code>) serves three different read patterns, so it keeps three structures — and <code>add_word</code> writes to all of them (:32):</p>
+  <table class="map">
+    <tr><th>Structure</th><th>Purpose</th><th>Read by</th></tr>
+    <tr><td><code>deque(maxlen=10000)</code></td><td>Rolling "last N words" window</td><td><code>/api/last-word</code>, <code>/api/last-words</code></td></tr>
+    <tr><td><code>queue.Queue</code> (unbounded)</td><td>Consume-once mailbox</td><td><code>/api/pop-word</code>, <code>/api/pop-words</code></td></tr>
+    <tr><td><code>list[asyncio.Queue]</code></td><td>One live feed per WS client</td><td><code>WS /ws/stream</code></td></tr>
+  </table>
+  <p class="caption"><code>transcript_store.py:20–27</code>. The <code>deque</code> and segment access are guarded by <code>_lock</code>; the subscriber list by <code>_ws_lock</code>.</p>
+
+  <aside class="margin"><b>pop vs. last.</b> <code>pop-*</code> endpoints <em>consume</em> words (each returned once — good for a downstream consumer draining the feed). <code>last-*</code> endpoints <em>peek</em> at the rolling window (same word can be read repeatedly — good for a dashboard). Two structures, two semantics, deliberately.</aside>
+
+  <h3>Dependency injection by module attribute</h3>
+  <p><code>server.py</code> defines the app and endpoints but starts with <em>empty</em> globals: <code>stores = {}</code> (:23). <code>serve.py</code> fills them in at startup through a FastAPI <span class="kw">lifespan</span> context manager, then starts capture and workers, and reverses it all on shutdown:</p>
+
+<pre><code>@asynccontextmanager
+async def lifespan(app):
+    import server
+    server.stores = stores          # inject the wired-up stores
+    server._status_info = {...}
+    capture.start()
+    for worker, q in workers: worker.start(q)
+    yield                            # ← app serves requests here
+    for worker, _ in workers: worker.stop()
+    capture.stop()</code></pre>
+  <p class="caption"><code>serve.py:153–188</code>. This is why <code>server.py</code> can be imported without any hardware attached — the wiring is deferred to run time.</p>
+
+  <aside class="margin"><span class="flag">Sharp edge — verify</span> <code>add_word</code> calls <code>put_nowait</code> on an <code>asyncio.Queue</code> from the <em>worker thread</em> (<code>transcript_store.py:38</code>). <code>asyncio.Queue</code> is not documented as thread-safe; the textbook-correct bridge is <code>loop.call_soon_threadsafe(...)</code>. It works in practice here, but if you ever add features to the WebSocket path, this is the line to scrutinize. Good thing to confirm against the asyncio docs.</aside>
+
+  <div class="quiz" data-quiz>
+    <p class="q"><span class="tag">Understand</span>What is the role of the <code>lifespan</code> context manager in <code>serve.py</code>?</p>
+    <button class="opt" onclick="ans(this,0)">It defines the REST routes for the server</button>
+    <button class="opt" onclick="ans(this,1)">It injects state and starts/stops capture with the server</button>
+    <button class="opt" onclick="ans(this,0)">It converts NeMo dicts into dataclasses</button>
+    <button class="opt" onclick="ans(this,0)">It resamples incoming audio to 16 kHz</button>
+    <div class="explain"><b>Right.</b> The lifespan runs setup before the app serves (inject <code>stores</code>, start capture + workers) and teardown after (stop everything). It's the seam between "an importable FastAPI app" and "a running service with live hardware."</div>
+  </div>
+</section>
+
+<!-- ===================== LESSON 6 ===================== -->
+<section class="lesson" id="capture">
+  <p class="kicker">Lesson 06</p>
+  <h2>Capturing the physical world</h2>
+  <p class="win"><b>Win:</b> you can explain how three very different sources become one uniform stream.</p>
+
+  <p>The worker (Lesson 03) doesn't care where audio came from — it just wants <b>float32, 16 kHz, mono</b> chunks. <code>AudioCapture</code>'s whole job is to make mic, desktop, and network all look identical. That's a textbook <span class="kw">abstraction boundary</span>: hide three messy realities behind one clean contract.</p>
+
+  <table class="map">
+    <tr><th>Source</th><th>Mechanism</th><th>Where</th></tr>
+    <tr><td>Mic</td><td><code>sounddevice.InputStream</code> callback</td><td><code>_open_mic_stream</code> :264</td></tr>
+    <tr><td>Desktop</td><td>WASAPI loopback (Windows-only)</td><td><code>_open_desktop_stream</code> :281</td></tr>
+    <tr><td>Network</td><td><code>ffmpeg</code> subprocess piping raw PCM</td><td><code>_run_network_reader</code> :220</td></tr>
+  </table>
+
+  <h3>The two conversions every source must do</h3>
+  <p><b>1. Sample-rate match.</b> A mic might run at 44.1 or 48 kHz natively, but NeMo wants 16 kHz. The callback resamples with a rational ratio computed via GCD:</p>
+<pre><code>g = gcd(self.sample_rate, native_rate)
+audio = resample_poly(audio, self.sample_rate // g, native_rate // g)</code></pre>
+  <p class="caption"><code>audio_capture.py:151–154</code>. e.g. 48000→16000 reduces to up=1, down=3.</p>
+
+  <p><b>2. Format match.</b> The network path receives 16-bit signed PCM bytes from ffmpeg and must convert to normalized float:</p>
+<pre><code>audio = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0</code></pre>
+  <p class="caption"><code>audio_capture.py:247</code>. Dividing by 2<sup>15</sup> maps int16's ±32768 range onto float [-1, 1).</p>
+
+  <aside class="margin"><b>WASAPI loopback</b> records what your speakers are <em>playing</em> — the OS routes the output back as a capture device. <code>_find_wasapi_loopback_device</code> (:30) hunts for it; if it can't, it raises a helpful error telling you to pass <code>--device-index</code>. This is Windows-only, hence the explicit <code>sys.platform != "win32"</code> guard at :282.</aside>
+
+  <aside class="margin"><b>Two capture strategies.</b> Mic/desktop use <em>push</em> (sounddevice invokes your callback). Network uses <em>pull</em> (a background thread blocks on <code>proc.stdout.read()</code>). Different mechanisms, same destination queue — the abstraction holds.</aside>
+
+  <p>The <code>get_queues()</code> method (:124) is the routing table: it decides, based on <code>source</code> and <code>mix_mode</code>, which named queues exist. <code>--source both --mix separate</code> yields two queues (<code>mic</code>, <code>desktop</code>) → two workers → two independent transcripts; <code>--mix mixed</code> yields one shared queue both devices write into.</p>
+
+  <div class="quiz" data-quiz>
+    <p class="q"><span class="tag">Understand</span>What does the abstraction in <code>AudioCapture</code> guarantee to the ASR worker?</p>
+    <button class="opt" onclick="ans(this,0)">That audio always comes from a microphone device</button>
+    <button class="opt" onclick="ans(this,1)">Uniform float32 16 kHz mono chunks, whatever the source</button>
+    <button class="opt" onclick="ans(this,0)">That the queue will never drop any audio chunk</button>
+    <button class="opt" onclick="ans(this,0)">That transcription runs on the GPU and not the CPU</button>
+    <div class="explain"><b>Right.</b> The point of the abstraction is that the worker is source-agnostic. Mic, WASAPI loopback, and ffmpeg network streams all resample and reformat down to the same float32/16 kHz/mono contract before hitting the queue.</div>
+  </div>
+</section>
+
+<!-- ===================== LESSON 7 ===================== -->
+<section class="lesson" id="diar">
+  <p class="kicker">Lesson 07</p>
+  <h2>Diarization mode (who spoke when)</h2>
+  <p class="win"><b>Win:</b> you can say what this mode adds over the others, and why its config is so big.</p>
+
+  <p><code>main_single_track.py</code> is the exploratory pipeline for multi-speaker conversations. Plain transcription tells you <em>what</em> was said; <span class="kw">diarization</span> adds <em>who</em> said it. It composes two additional NVIDIA models on top of Parakeet:</p>
+  <ul>
+    <li><code>nvidia/diar_streaming_sortformer_4spk-v2.1</code> — <b>Sortformer</b>, a streaming diarizer that segments audio by speaker (up to 4).</li>
+    <li><code>nvidia/multitalker-parakeet-streaming-0.6b-v1</code> — a multitalker ASR variant that transcribes with speaker awareness.</li>
+  </ul>
+
+  <p>The core loop (<code>transcribe_audio_multitalker_parakeet</code>, :61) feeds audio through a <code>CacheAwareStreamingAudioBuffer</code> and a <code>SpeakerTaggedASR</code> helper, chunk by chunk, producing speaker-tagged segments. That "cache-aware streaming" is how the model processes a long stream in pieces while remembering context across chunk boundaries — the streaming analogue to Lesson 02's overlap trick, but handled inside NeMo.</p>
+
+  <aside class="margin"><b>Why ~50 config knobs?</b> <code>MultitalkerTranscriptionConfig</code> exposes streaming diarization internals: <code>spkcache_len</code>, <code>fifo_len</code>, <code>chunk_left/right_context</code>, and more. Streaming diarization has to decide how much past audio to remember per speaker and how much look-ahead it's allowed — each is a latency/accuracy dial. Contrast this with batch <span class="mono">wisper</span>, which has one real knob (<code>--chunk-minutes</code>).</aside>
+
+  <div class="note">
+    <b>Honest framing.</b> This file carries an NVIDIA license header and mirrors NVIDIA's reference multitalker example — it's the least "yours" and most experimental code in the repo (note the leftover stray imports at the top, e.g. <code>unittest.result</code>). Treat it as an <em>integration</em> of NVIDIA's streaming diarization recipe, not hand-built infrastructure like the real-time service. If you extend it, the <a href="#sources">Sortformer model card</a> is your primary reference. <span class="flag">Verify against upstream.</span>
+  </div>
+
+  <div class="quiz" data-quiz>
+    <p class="q"><span class="tag">Recall</span>What does diarization add that plain transcription does not?</p>
+    <button class="opt" onclick="ans(this,0)">More accurate word-level timestamps</button>
+    <button class="opt" onclick="ans(this,1)">Speaker labels — which person said each part</button>
+    <button class="opt" onclick="ans(this,0)">Support for transcribing longer audio files</button>
+    <button class="opt" onclick="ans(this,0)">Translation of the transcript into other languages</button>
+    <div class="explain"><b>Right.</b> Diarization answers "who spoke when." Sortformer segments the audio by speaker; the multitalker ASR then attributes transcribed text to those speakers.</div>
+  </div>
+</section>
+
+<!-- ===================== GLOSSARY ===================== -->
+<section class="lesson" id="glossary">
+  <p class="kicker">Reference</p>
+  <h2>Glossary</h2>
+  <p class="win">The shared vocabulary — adhered to across every lesson above.</p>
+  <dl class="glossary">
+    <dt>ASR</dt><dd>Automatic Speech Recognition — turning audio into text. The core task of this repo.</dd>
+    <dt>Parakeet TDT</dt><dd>NVIDIA's ASR model family used here (<code>parakeet-tdt-0.6b-v3</code>). TDT = <em>Token-and-Duration Transducer</em>, a transducer variant that predicts both tokens and how long each lasts, which is what gives the clean word/segment/char timestamps.</dd>
+    <dt>NeMo</dt><dd>NVIDIA's toolkit that hosts the models. This repo uses it only through <code>ASRModel.from_pretrained(...).transcribe(...)</code>.</dd>
+    <dt>Diarization</dt><dd>Determining <em>who</em> spoke <em>when</em> — speaker segmentation. Provided by Sortformer in Lesson 07.</dd>
+    <dt>Chunking</dt><dd>Splitting long audio into pieces to fit GPU memory (batch) or to enable incremental processing (streaming).</dd>
+    <dt>Overlap</dt><dd>Deliberately sharing audio between adjacent chunks so words at boundaries aren't sliced. Requires later dedup.</dd>
+    <dt>Producer / consumer</dt><dd>A pattern where one party generates data (audio capture) and another processes it (ASR worker), decoupled by a queue.</dd>
+    <dt>Backpressure</dt><dd>What a bounded queue exerts when the consumer can't keep up. Here, resolved by dropping the oldest chunk to favor freshness.</dd>
+    <dt>WASAPI loopback</dt><dd>A Windows audio feature that lets you record what the speakers are playing, by exposing the output as a capture device.</dd>
+    <dt>Resampling</dt><dd>Converting audio from one sample rate to another (e.g. 48 kHz mic → 16 kHz for NeMo) via <code>scipy.signal.resample_poly</code>.</dd>
+    <dt>Lifespan</dt><dd>A FastAPI startup/shutdown context manager. Here it injects shared state and starts/stops the capture and workers.</dd>
+    <dt>Dependency injection</dt><dd>Supplying an object its collaborators from outside rather than having it construct them. <code>serve.py</code> injects <code>stores</code> into <code>server.py</code>.</dd>
+    <dt>Seam</dt><dd>A shared type or boundary many parts route through. Here: <code>TrackTranscript</code>/<code>LiveWord</code> and the <code>TranscriptStore</code>.</dd>
+  </dl>
+</section>
+
+<!-- ===================== FINAL RECALL ===================== -->
+<section class="lesson" id="final">
+  <p class="kicker">Spaced retrieval</p>
+  <h2>Final recall (mixed)</h2>
+  <p class="win">These interleave lessons on purpose — recalling across topics builds durable memory, not just in-the-moment fluency. Try before scrolling back.</p>
+
+  <div class="quiz" data-quiz>
+    <p class="q"><span class="tag">Synthesis</span>You're asked to add a 5th audio source. Which file changes, and what contract must you honor?</p>
+    <button class="opt" onclick="ans(this,0)"><code>realtime_asr.py</code> — emit already-deduplicated words</button>
+    <button class="opt" onclick="ans(this,1)"><code>audio_capture.py</code> — push float32 16 kHz mono chunks to a queue</button>
+    <button class="opt" onclick="ans(this,0)"><code>server.py</code> — add a new REST endpoint for it</button>
+    <button class="opt" onclick="ans(this,0)"><code>models.py</code> — add a new dataclass for it</button>
+    <div class="explain"><b>Right.</b> A new source lives in <code>AudioCapture</code>; as long as it delivers the same float32/16 kHz/mono chunks to a queue and appears in <code>get_queues()</code>, the worker, store, and server need no changes. That's the payoff of the Lesson 06 abstraction.</div>
+  </div>
+
+  <div class="quiz" data-quiz>
+    <p class="q"><span class="tag">Synthesis</span>Which pair correctly matches each mode's dedup strategy?</p>
+    <button class="opt" onclick="ans(this,1)">Batch: timestamp midpoint · Real-time: matching word sequences</button>
+    <button class="opt" onclick="ans(this,0)">Batch: matching word sequences · Real-time: timestamp midpoint</button>
+    <button class="opt" onclick="ans(this,0)">Batch: no dedup needed · Real-time: timestamp midpoint cut</button>
+    <button class="opt" onclick="ans(this,0)">Both modes: identical greedy word-sequence matching</button>
+    <div class="explain"><b>Right — the keystone.</b> Batch has all timestamps → cuts by position. Streaming has only emitted history → cuts by matching text. Same problem (overlap duplicates), different information, different solution.</div>
+  </div>
+
+  <div class="quiz" data-quiz>
+    <p class="q"><span class="tag">Synthesis</span>A live transcript lags 40 seconds behind and never catches up. First place to look?</p>
+    <button class="opt" onclick="ans(this,1)">The bounded queue / drop-oldest logic in capture</button>
+    <button class="opt" onclick="ans(this,0)">The JSON serialization in <code>save_transcript_to_file</code></button>
+    <button class="opt" onclick="ans(this,0)">The <code>ffprobe</code> track-detection in the batch path</button>
+    <button class="opt" onclick="ans(this,0)">The <code>frozen=True</code> flag on the dataclasses</button>
+    <div class="explain"><b>Right.</b> Sustained lag means the consumer can't keep up and the queue should be shedding old audio (drop-oldest, <code>audio_capture.py:156</code>). If it's <em>not</em> dropping — or inference is simply too slow per chunk — that's your culprit. The JSON/ffprobe/dataclass options are all batch-path or irrelevant.</div>
+  </div>
+</section>
+
+<footer id="sources">
+  <div class="ask">
+    <b>I'm your teacher — ask me anything.</b> This file is a snapshot, not the last word. If a lesson is unclear, if you want a deeper dive into (say) the merge math or the WebSocket fan-out, or if you'd like me to add a lesson, just ask in the session. I can also split this into separate per-lesson files, add runnable exercises, or re-aim everything if your goal shifts.
+  </div>
+
+  <p class="lbl" style="font-variant:small-caps;letter-spacing:.07em;">Primary sources — verify claims here</p>
+  <p style="font-size:.85rem;line-height:1.7;">
+    Parakeet TDT model card — <a href="https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3">huggingface.co/nvidia/parakeet-tdt-0.6b-v3</a><br>
+    NVIDIA NeMo ASR docs — <a href="https://docs.nvidia.com/nemo-framework/user-guide/latest/nemotoolkit/asr/intro.html">docs.nvidia.com · NeMo ASR</a><br>
+    Sortformer diarizer — <a href="https://huggingface.co/nvidia/diar_streaming_sortformer_4spk-v2.1">huggingface.co/nvidia/diar_streaming_sortformer_4spk-v2.1</a><br>
+    FastAPI lifespan events — <a href="https://fastapi.tiangolo.com/advanced/events/">fastapi.tiangolo.com/advanced/events</a><br>
+    FastAPI WebSockets — <a href="https://fastapi.tiangolo.com/advanced/websockets/">fastapi.tiangolo.com/advanced/websockets</a><br>
+    python-sounddevice (PortAudio) — <a href="https://python-sounddevice.readthedocs.io/">python-sounddevice.readthedocs.io</a><br>
+    Python <code>queue</code> module — <a href="https://docs.python.org/3/library/queue.html">docs.python.org/3/library/queue</a><br>
+    Python <code>dataclasses</code> — <a href="https://docs.python.org/3/library/dataclasses.html">docs.python.org/3/library/dataclasses</a><br>
+    <code>scipy.signal.resample_poly</code> — <a href="https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.resample_poly.html">docs.scipy.org · resample_poly</a><br>
+    ffmpeg CLI — <a href="https://ffmpeg.org/ffmpeg.html">ffmpeg.org/ffmpeg.html</a>
+  </p>
+  <p style="margin-top:1.4em;font-size:.8rem;">Generated as a single-file guided tour of <span class="mono">wisper</span>. All <code>file:line</code> references were read from source; external facts should be confirmed against the primary sources above.</p>
+</footer>
+
+</main>
+</div>
+</div>
+
+<script>
+function ans(btn, correct){
+  var quiz = btn.closest('.quiz');
+  if(quiz.dataset.done) return;
+  quiz.dataset.done = '1';
+  var opts = quiz.querySelectorAll('.opt');
+  opts.forEach(function(o){ o.disabled = true; });
+  // Mark: the clicked button knows if it's correct via the argument.
+  if(correct){ btn.classList.add('right'); }
+  else{
+    btn.classList.add('wrong');
+    // reveal the correct one (the option whose onclick passes 1)
+    opts.forEach(function(o){
+      if(/ans\(this,\s*1\)/.test(o.getAttribute('onclick'))) o.classList.add('right');
+    });
+  }
+  var ex = quiz.querySelector('.explain');
+  if(ex) ex.style.display = 'block';
+}
+</script>
+</body>
+</html>

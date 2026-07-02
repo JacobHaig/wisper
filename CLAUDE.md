@@ -21,7 +21,8 @@ uv run main.py
 # Common CLI flags
 uv run main.py --input video/interview.mp4        # single file
 uv run main.py --audio-only --input audio/pod.mp3 # skip video extraction
-uv run main.py --format txt                        # plain text output
+uv run main.py --format txt                        # plain text (segments + timestamps)
+uv run main.py --format plain                      # plain text, no timestamps (segment text only)
 uv run main.py --skip-existing --dry-run           # preview without running
 
 # Run single-track mode with diarization support
@@ -62,14 +63,14 @@ uv run serve.py --port 9000 --chunk-seconds 5.0
 # For separate mode, add ?source=mic or ?source=desktop to any endpoint
 ```
 
-**System requirements:** Python 3.13, CUDA 12.8 GPU, ffmpeg/ffprobe installed.
+**System requirements:** Python 3.12 (3.13 lacks a prebuilt `editdistance` wheel, forcing a source build that Windows 11 Smart App Control may block), CUDA 12.8 GPU, ffmpeg/ffprobe installed.
 
 ## Architecture
 
 **Workflow:** Place videos in `video/` → run `main.py` → audio extracted to `audio/` as mono MP3 per track → transcripts saved to `transcript/` as JSON or plain text.
 
 **Key files:**
-- `main.py` — Primary CLI entry point for batch transcription. Full argparse interface with input selection (`--input`, `--audio-only`, `--tracks`), output format (`--format json|txt`), directory overrides, verbosity control, `--skip-existing`, and `--dry-run`. Extracts audio via ffprobe/ffmpeg, transcribes with Parakeet TDT, saves structured output.
+- `main.py` — Primary CLI entry point for batch transcription. Full argparse interface with input selection (`--input`, `--audio-only`, `--tracks`), output format (`--format json|txt|plain`), directory overrides, verbosity control, `--skip-existing`, and `--dry-run`. Extracts audio via ffprobe/ffmpeg, transcribes with Parakeet TDT, saves structured output.
 - `serve.py` — CLI entry point for the real-time transcription service. Starts audio capture + ASR workers + FastAPI server.
 - `server.py` — FastAPI application with REST and WebSocket endpoints for querying live transcription.
 - `models.py` — Shared data types (`WordTimestamp`, `SegmentTimestamp`, `CharTimestamp`, `TrackTranscript`, `LiveWord`) used by both batch and real-time pipelines.
@@ -85,7 +86,7 @@ uv run serve.py --port 9000 --chunk-seconds 5.0
 2. `convert_video_to_audio_tracks()` — uses ffprobe to detect track count, ffmpeg to extract each as mono MP3
 3. `transcribe_audio_parakeet()` — loads `nvidia/parakeet-tdt-0.6b-v3` model; if `--chunk-minutes > 0`, splits each audio file into overlapping chunks via ffmpeg, transcribes each independently, then merges into one continuous `TrackTranscript`; otherwise transcribes in one pass
 4. `save_transcript_to_file()` — writes JSON with word/segment/char timestamp arrays
-5. `save_transcript_as_text()` — writes plain text with `start - end : segment` lines (used when `--format txt`)
+5. `save_transcript_as_text()` — writes plain text; `--format txt` gives `start - end : segment` lines, `--format plain` gives segment text only with no timestamps (via its `timestamps=False` parameter)
 
 **Audio chunking** (`--chunk-minutes`, default `5.0`): Long audio files are split into overlapping chunks using ffmpeg before transcription to avoid CUDA OOM. Each chunk is transcribed independently and the results are merged back into one single transcript — the output is identical in structure to a non-chunked run. The overlap window (15s, hardcoded as `CHUNK_OVERLAP_SECONDS`) prevents words being cut at boundaries. Use `--chunk-minutes 0` to disable chunking entirely.
 
