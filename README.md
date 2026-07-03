@@ -22,19 +22,19 @@ wisper has three distinct modes — pick the one that fits your use case:
 - **NVIDIA NeMo ASR** — transcription powered by the Parakeet TDT 0.6B model for high-accuracy speech recognition
 - **Speaker diarization** — optional single-track mode with streaming diarization and multitalker support
 - **Flexible CLI** — process specific files, entire directories, or audio-only workflows
-- **Multiple output formats** — JSON with full timestamp data or plain text
+- **Multiple output formats** — JSON with full word/segment/char timestamps, plain text with timestamps (`txt`), or plain text with no timestamps (`plain`)
 - **Batch processing** — process all files in a directory with one command
 
 ## Requirements
 
 > **GPU required.** wisper uses NVIDIA NeMo ASR models which require a CUDA-capable GPU. It will not run on CPU.
 
-- Python 3.13+
+- Python **3.12** (recommended). Python 3.13 has no prebuilt `editdistance` wheel yet, so on Windows it must compile from source — see the note below.
 - NVIDIA GPU with CUDA 12.8 support and **at least 8GB VRAM** (10GB+ recommended)
 - [CUDA 12.8 toolkit](https://developer.nvidia.com/cuda-12-8-0-download-archive) installed
 - [ffmpeg](https://ffmpeg.org/) and ffprobe installed and on PATH
 - [uv](https://github.com/astral-sh/uv) package manager
-- **Windows:** [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) — required to compile the `editdistance` C extension (a dependency of `nemo-toolkit`). During installation, select the **"Desktop development with C++"** workload.
+- **Windows + Python 3.13 only:** [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) are required to compile `editdistance` from source (no 3.13 wheel exists), and Windows 11 **Smart App Control** may block that build (`ImportError: DLL load failed ... An Application Control policy has blocked this file`). Using **Python 3.12** avoids both — the `editdistance` wheel is prebuilt, so no compiler is needed.
 
 ## Installation
 
@@ -182,7 +182,7 @@ uv run main.py [OPTIONS]
 
 | Flag | Description |
 |------|-------------|
-| `--format {json,txt}` | Output format (default: `json`) |
+| `--format {json,txt,plain}` | Output format (default: `json`). `txt` = segments with timestamps; `plain` = segment text only, no timestamps |
 | `--model NAME` | ASR model (default: `nvidia/parakeet-tdt-0.6b-v3`) |
 | `--verbose, -v` | Show segment-level timestamps during transcription |
 | `--quiet, -q` | Suppress all output except errors and final file paths |
@@ -213,8 +213,11 @@ uv run main.py --audio-only --audio-dir /path/to/recordings
 # Extract and transcribe only tracks 1 and 3
 uv run main.py --input video/recording.mkv --tracks 1 3
 
-# Output as plain text instead of JSON
+# Output as plain text (segments with timestamps)
 uv run main.py --format txt
+
+# Output as plain text WITHOUT timestamps (segment text only)
+uv run main.py --format plain
 
 # Preview what would be processed
 uv run main.py --dry-run
@@ -251,13 +254,24 @@ Each transcript is a JSON array with one entry per audio track. Each entry conta
 ]
 ```
 
-### Plain Text (`--format txt`)
+### Plain Text with timestamps (`--format txt`)
 
 ```
 --- Track 1 ---
 0.0s - 2.5s : Hello world
 2.8s - 5.1s : This is a transcript
 ```
+
+### Plain Text without timestamps (`--format plain`)
+
+Just the segment text, one segment per line — no timestamps (track headers still appear only when there are multiple tracks):
+
+```
+Hello world
+This is a transcript
+```
+
+> **Note:** `txt` and `plain` both write a `.txt` file, so they share the same output filename — the newer run replaces the older one. To keep both, point `--output-dir` somewhere else for one of them.
 
 ## Project Structure
 

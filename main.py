@@ -67,7 +67,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", default=ASR_MODEL_NAME, help=f"ASR model name (default: {ASR_MODEL_NAME})")
 
     # Output format
-    parser.add_argument("--format", choices=["json", "txt"], default="json", help="Output format (default: json)")
+    parser.add_argument(
+        "--format",
+        choices=["json", "txt", "plain"],
+        default="json",
+        help="Output format: json (full timestamps), txt (segments with timestamps), or plain (segment text only, no timestamps). Default: json",
+    )
 
     # Verbosity (mutually exclusive)
     verbosity = parser.add_mutually_exclusive_group()
@@ -386,8 +391,16 @@ def save_transcript_to_file(transcripts: list[TrackTranscript], output_path: Pat
     _print(f"Transcript saved to {output_path}", level=0)
 
 
-def save_transcript_as_text(transcripts: list[TrackTranscript], output_path: Path) -> None:
-    """Serialize transcripts to plain text with timestamps."""
+def save_transcript_as_text(
+    transcripts: list[TrackTranscript],
+    output_path: Path,
+    timestamps: bool = True,
+) -> None:
+    """Serialize transcripts to plain text.
+
+    If ``timestamps`` is True, each line is "start - end : segment"; otherwise
+    only the segment text is written (one segment per line).
+    """
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     lines: list[str] = []
@@ -395,7 +408,10 @@ def save_transcript_as_text(transcripts: list[TrackTranscript], output_path: Pat
         if len(transcripts) > 1:
             lines.append(f"--- Track {i + 1} ---")
         for seg in transcript.segment:
-            lines.append(f"{round(seg.start, 2)}s - {round(seg.end, 2)}s : {seg.segment}")
+            if timestamps:
+                lines.append(f"{round(seg.start, 2)}s - {round(seg.end, 2)}s : {seg.segment}")
+            else:
+                lines.append(seg.segment)
         if len(transcripts) > 1:
             lines.append("")
 
@@ -459,7 +475,7 @@ def main() -> None:
             return
 
     for filepath in input_files:
-        ext = ".txt" if args.format == "txt" else ".json"
+        ext = ".txt" if args.format in ("txt", "plain") else ".json"
         output_path = output_dir / f"{filepath.stem}{ext}"
 
         if args.skip_existing and output_path.exists():
@@ -489,6 +505,8 @@ def main() -> None:
 
         if args.format == "txt":
             save_transcript_as_text(transcripts, output_path)
+        elif args.format == "plain":
+            save_transcript_as_text(transcripts, output_path, timestamps=False)
         else:
             save_transcript_to_file(transcripts, output_path)
 
